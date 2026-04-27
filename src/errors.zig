@@ -7,7 +7,11 @@ pub const MnemeError = error{
     InvalidMagic,
     UnsupportedVersion,
     InvalidMetric,
+    InvalidIndexConfig,
+    InvalidEfSearch,
     TruncatedFile,
     CorruptRecord,
     VectorLengthMismatch,
+    IndexNotBuilt,
+    IndexStale,
 };
