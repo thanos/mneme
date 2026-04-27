@@ -11,6 +11,16 @@ test "dimension mismatch fails" {
     try std.testing.expectError(mneme.MnemeError.InvalidDimension, mneme.vector.ensureDimension(&vec, 2));
 }
 
+test "expected zero dimension is invalid dimension" {
+    const vec = [_]f32{ 1.0 };
+    try std.testing.expectError(mneme.MnemeError.InvalidDimension, mneme.vector.ensureDimension(&vec, 0));
+}
+
+test "empty input vector returns empty vector error" {
+    const vec = [_]f32{};
+    try std.testing.expectError(mneme.MnemeError.EmptyVector, mneme.vector.ensureDimension(&vec, 1));
+}
+
 test "zero vector detection works" {
     const zero = [_]f32{ 0.0, 0.0, 0.0 };
     const non_zero = [_]f32{ 0.0, 1.0, 0.0 };

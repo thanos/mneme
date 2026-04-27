@@ -2,7 +2,8 @@ const std = @import("std");
 const MnemeError = @import("errors.zig").MnemeError;
 
 pub fn ensureDimension(vector: []const f32, expected: usize) !void {
-    if (expected == 0 or vector.len == 0) return MnemeError.EmptyVector;
+    if (expected == 0) return MnemeError.InvalidDimension;
+    if (vector.len == 0) return MnemeError.EmptyVector;
     if (vector.len != expected) return MnemeError.InvalidDimension;
 }
 
