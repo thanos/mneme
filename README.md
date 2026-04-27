@@ -32,6 +32,12 @@ zig build
 zig build test
 ```
 
+## Lint
+
+```bash
+zig build lint
+```
+
 ## Benchmark (Baseline)
 
 ```bash
@@ -51,8 +57,8 @@ const std = @import("std");
 const mneme = @import("mneme");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     var collection = try mneme.Collection.init(allocator, "docs", 3, .cosine);
@@ -63,9 +69,13 @@ pub fn main() !void {
 
     const query = [_]f32{ 1.0, 0.0, 0.0 };
     const results = try collection.search(&query, 10);
-    defer allocator.free(results);
+    defer collection.freeSearchResults(results);
 }
 ```
+
+## Notes
+
+- `prompts/` contains local planning artifacts and is not part of the runtime package API.
 
 ## Roadmap
 

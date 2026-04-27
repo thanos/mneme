@@ -24,5 +24,8 @@ jobs:
       - name: Lint
         run: zig build lint
 
+      - name: Format check
+        run: zig fmt --check .
+
       - name: Test
         run: zig build test

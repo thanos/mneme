@@ -47,3 +47,23 @@ test "top-k larger than available data works" {
     try std.testing.expectEqual(@as(usize, 1), results.len);
     try std.testing.expect(std.mem.eql(u8, "a", results[0].id));
 }
+
+test "top-k zero returns empty results" {
+    var collection = try mneme.Collection.init(std.testing.allocator, "docs", 3, .cosine);
+    defer collection.deinit();
+
+    const a = [_]f32{ 1.0, 0.0, 0.0 };
+    try collection.insert("a", &a, null);
+
+    const query = [_]f32{ 1.0, 0.0, 0.0 };
+    const results = try mneme.FlatIndex.search(
+        std.testing.allocator,
+        collection.points.items,
+        &query,
+        0,
+        .cosine,
+    );
+    defer mneme.FlatIndex.freeSearchResults(std.testing.allocator, results);
+
+    try std.testing.expectEqual(@as(usize, 0), results.len);
+}

@@ -1,6 +1,24 @@
 const std = @import("std");
 const zlinter = @import("zlinter");
 
+fn addMnemeTest(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    mneme_module: *std.Build.Module,
+    test_path: []const u8,
+) *std.Build.Step.Run {
+    const test_artifact = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(test_path),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    test_artifact.root_module.addImport("mneme", mneme_module);
+    return b.addRunArtifact(test_artifact);
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -52,45 +70,34 @@ pub fn build(b: *std.Build) void {
     });
     const run_root_tests = b.addRunArtifact(root_tests);
 
-    const vector_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/vector_test.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    vector_tests.root_module.addImport("mneme", mneme_module);
-    const run_vector_tests = b.addRunArtifact(vector_tests);
-
-    const distance_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/distance_test.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    distance_tests.root_module.addImport("mneme", mneme_module);
-    const run_distance_tests = b.addRunArtifact(distance_tests);
-
-    const collection_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/collection_test.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    collection_tests.root_module.addImport("mneme", mneme_module);
-    const run_collection_tests = b.addRunArtifact(collection_tests);
-
-    const index_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/index_test.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    index_tests.root_module.addImport("mneme", mneme_module);
-    const run_index_tests = b.addRunArtifact(index_tests);
+    const run_vector_tests = addMnemeTest(
+        b,
+        target,
+        optimize,
+        mneme_module,
+        "test/vector_test.zig",
+    );
+    const run_distance_tests = addMnemeTest(
+        b,
+        target,
+        optimize,
+        mneme_module,
+        "test/distance_test.zig",
+    );
+    const run_collection_tests = addMnemeTest(
+        b,
+        target,
+        optimize,
+        mneme_module,
+        "test/collection_test.zig",
+    );
+    const run_index_tests = addMnemeTest(
+        b,
+        target,
+        optimize,
+        mneme_module,
+        "test/index_test.zig",
+    );
 
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_root_tests.step);

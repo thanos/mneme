@@ -8,7 +8,7 @@ pub const Metric = enum {
 };
 
 pub const SearchResult = struct {
-    id: []u8,
+    id: []const u8,
     score: f32,
 };
 
@@ -64,7 +64,7 @@ pub const FlatIndex = struct {
 
     pub fn freeSearchResults(allocator: std.mem.Allocator, results: []SearchResult) void {
         for (results) |result| {
-            allocator.free(result.id);
+            allocator.free(@constCast(result.id));
         }
         allocator.free(results);
     }

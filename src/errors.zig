@@ -4,5 +4,4 @@ pub const MnemeError = error{
     ZeroVector,
     DuplicateId,
     IdNotFound,
-    UnsupportedMetric,
 };
