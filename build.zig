@@ -13,6 +13,7 @@ fn addMnemeTest(
             .root_source_file = b.path(test_path),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     test_artifact.root_module.addImport("mneme", mneme_module);
@@ -66,6 +67,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/mneme.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     const run_root_tests = b.addRunArtifact(root_tests);
