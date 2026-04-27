@@ -12,9 +12,27 @@ pub const HnswConfig = struct {
     seed: u64 = 42,
 };
 
+pub const HnswStats = struct {
+    node_count: usize,
+    max_level: isize,
+    avg_degree_layer0: f64,
+    level_counts: []usize,
+    allocator: std.mem.Allocator,
+
+    pub fn deinit(self: *HnswStats) void {
+        self.allocator.free(self.level_counts);
+        self.level_counts = &.{};
+    }
+};
+
 const ScoredNode = struct {
     node_index: usize,
     score: f32,
+};
+
+const EntryPoint = struct {
+    node_index: usize,
+    level: usize,
 };
 
 pub const HnswNode = struct {
@@ -36,8 +54,7 @@ pub const HnswIndex = struct {
     metric: Metric,
     config: HnswConfig,
     nodes: std.ArrayList(HnswNode),
-    entry_point: ?usize,
-    max_level: isize,
+    entry: ?EntryPoint,
     prng: std.Random.DefaultPrng,
     point_norms: std.ArrayList(f32),
     visit_marks: std.ArrayList(u32),
@@ -45,6 +62,7 @@ pub const HnswIndex = struct {
     scratch_candidates: std.ArrayList(ScoredNode),
     scratch_results: std.ArrayList(ScoredNode),
     scratch_touched: std.ArrayList(usize),
+    scratch_prune: std.ArrayList(ScoredNode),
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -63,8 +81,7 @@ pub const HnswIndex = struct {
             .metric = metric,
             .config = config,
             .nodes = .empty,
-            .entry_point = null,
-            .max_level = -1,
+            .entry = null,
             .prng = std.Random.DefaultPrng.init(config.seed),
             .point_norms = .empty,
             .visit_marks = .empty,
@@ -72,6 +89,7 @@ pub const HnswIndex = struct {
             .scratch_candidates = .empty,
             .scratch_results = .empty,
             .scratch_touched = .empty,
+            .scratch_prune = .empty,
         };
     }
 
@@ -85,8 +103,8 @@ pub const HnswIndex = struct {
         self.scratch_candidates.deinit(self.allocator);
         self.scratch_results.deinit(self.allocator);
         self.scratch_touched.deinit(self.allocator);
-        self.entry_point = null;
-        self.max_level = -1;
+        self.scratch_prune.deinit(self.allocator);
+        self.entry = null;
     }
 
     pub fn build(self: *HnswIndex, points: []const Point) !void {
@@ -107,14 +125,13 @@ pub const HnswIndex = struct {
         const level = self.randomLevel();
         const node_index = try self.addNode(point_index, level);
 
-        if (self.entry_point == null) {
-            self.entry_point = node_index;
-            self.max_level = @as(isize, @intCast(level));
+        if (self.entry == null) {
+            self.entry = .{ .node_index = node_index, .level = level };
             return;
         }
 
-        var current = self.entry_point.?;
-        var layer: isize = self.max_level;
+        var current = self.entry.?.node_index;
+        var layer: isize = @as(isize, @intCast(self.entry.?.level));
         while (layer > @as(isize, @intCast(level))) : (layer -= 1) {
             current = try self.greedySearchAtLayer(
                 points,
@@ -125,7 +142,7 @@ pub const HnswIndex = struct {
             );
         }
 
-        const connect_max_layer = @min(@as(usize, @intCast(self.max_level)), level);
+        const connect_max_layer = @min(self.entry.?.level, level);
         var l: isize = @as(isize, @intCast(connect_max_layer));
         while (l >= 0) : (l -= 1) {
             const layer_usize: usize = @intCast(l);
@@ -156,9 +173,8 @@ pub const HnswIndex = struct {
             }
         }
 
-        if (@as(isize, @intCast(level)) > self.max_level) {
-            self.entry_point = node_index;
-            self.max_level = @as(isize, @intCast(level));
+        if (self.entry == null or level > self.entry.?.level) {
+            self.entry = .{ .node_index = node_index, .level = level };
         }
     }
 
@@ -180,8 +196,8 @@ pub const HnswIndex = struct {
         } else @max(self.config.ef_search, top_k);
         const query_norm = try vector.norm(query);
 
-        var current = self.entry_point.?;
-        var layer = self.max_level;
+        var current = self.entry.?.node_index;
+        var layer: isize = @as(isize, @intCast(self.entry.?.level));
         while (layer > 0) : (layer -= 1) {
             current = try self.greedySearchAtLayer(points, query, query_norm, current, @as(usize, @intCast(layer)));
         }
@@ -227,8 +243,8 @@ pub const HnswIndex = struct {
         self.scratch_candidates.clearRetainingCapacity();
         self.scratch_results.clearRetainingCapacity();
         self.scratch_touched.clearRetainingCapacity();
-        self.entry_point = null;
-        self.max_level = -1;
+        self.scratch_prune.clearRetainingCapacity();
+        self.entry = null;
         self.prng = std.Random.DefaultPrng.init(self.config.seed);
         self.visit_epoch = 1;
     }
@@ -264,6 +280,7 @@ pub const HnswIndex = struct {
     fn randomLevel(self: *HnswIndex) usize {
         var level: usize = 0;
         var rng = self.prng.random();
+        // Keep level generation bounded and deterministic for Phase 3.
         while (rng.float(f32) < 0.5 and level < 32) {
             level += 1;
         }
@@ -386,16 +403,15 @@ pub const HnswIndex = struct {
             self.point_norms.items[self.nodes.items[node_index].point_index]
         else
             try vector.norm(query_vector);
-        var scored: std.ArrayList(ScoredNode) = .empty;
-        defer scored.deinit(self.allocator);
+        self.scratch_prune.clearRetainingCapacity();
         for (list.items) |neighbor| {
             const score = try self.similarity(points, neighbor, query_vector, query_norm);
-            try scored.append(self.allocator, .{ .node_index = neighbor, .score = score });
+            try self.scratch_prune.append(self.allocator, .{ .node_index = neighbor, .score = score });
         }
-        std.mem.sort(ScoredNode, scored.items, {}, lessThanByScoreDesc);
+        std.mem.sort(ScoredNode, self.scratch_prune.items, {}, lessThanByScoreDesc);
         list.clearRetainingCapacity();
-        const keep = @min(self.config.m, scored.items.len);
-        for (scored.items[0..keep]) |item| {
+        const keep = @min(self.config.m, self.scratch_prune.items.len);
+        for (self.scratch_prune.items[0..keep]) |item| {
             try list.append(self.allocator, item.node_index);
         }
     }
@@ -433,6 +449,32 @@ pub const HnswIndex = struct {
         const norm_b = query_norm;
         if (norm_a == 0.0 or norm_b == 0.0) return MnemeError.ZeroVector;
         return dot_product / (norm_a * norm_b);
+    }
+
+    pub fn stats(self: *const HnswIndex, allocator: std.mem.Allocator) !HnswStats {
+        const max_level = if (self.entry) |entry| @as(isize, @intCast(entry.level)) else -1;
+        const level_len: usize = if (max_level < 0) 0 else @as(usize, @intCast(max_level)) + 1;
+        const level_counts = try allocator.alloc(usize, level_len);
+        @memset(level_counts, 0);
+
+        var total_degree_layer0: usize = 0;
+        for (self.nodes.items) |node| {
+            if (node.level < level_counts.len) level_counts[node.level] += 1;
+            if (node.neighbors_by_layer.len > 0) total_degree_layer0 += node.neighbors_by_layer[0].items.len;
+        }
+
+        const avg_degree_layer0 = if (self.nodes.items.len == 0)
+            0.0
+        else
+            @as(f64, @floatFromInt(total_degree_layer0)) / @as(f64, @floatFromInt(self.nodes.items.len));
+
+        return .{
+            .node_count = self.nodes.items.len,
+            .max_level = max_level,
+            .avg_degree_layer0 = avg_degree_layer0,
+            .level_counts = level_counts,
+            .allocator = allocator,
+        };
     }
 };
 

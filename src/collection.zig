@@ -16,8 +16,7 @@ pub const Collection = struct {
     dimension: usize,
     metric: Metric,
     points: std.ArrayList(Point),
-    hnsw_index: ?HnswIndex,
-    hnsw_stale: bool,
+    hnsw_state: HnswState,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -33,15 +32,12 @@ pub const Collection = struct {
             .dimension = dimension,
             .metric = metric,
             .points = .empty,
-            .hnsw_index = null,
-            .hnsw_stale = false,
+            .hnsw_state = .none,
         };
     }
 
     pub fn deinit(self: *Collection) void {
-        if (self.hnsw_index) |*index| {
-            index.deinit();
-        }
+        self.deinitHnswState();
         for (self.points.items) |*point| {
             point.deinit(self.allocator);
         }
@@ -91,25 +87,21 @@ pub const Collection = struct {
         return switch (options.index) {
             .flat => self.search(query_vector, top_k),
             .hnsw => blk: {
-                if (self.hnsw_stale) return MnemeError.IndexStale;
-                if (self.hnsw_index) |*index| {
-                    break :blk index.search(self.points.items, query_vector, top_k, options.ef_search);
+                switch (self.hnsw_state) {
+                    .none => return MnemeError.IndexNotBuilt,
+                    .stale => return MnemeError.IndexStale,
+                    .fresh => |*index| break :blk index.search(self.points.items, query_vector, top_k, options.ef_search),
                 }
-                return MnemeError.IndexNotBuilt;
             },
         };
     }
 
     pub fn buildHnsw(self: *Collection, config: HnswConfig) !void {
-        if (self.hnsw_index) |*index| {
-            index.deinit();
-            self.hnsw_index = null;
-        }
+        self.deinitHnswState();
         var index = try HnswIndex.init(self.allocator, self.dimension, self.metric, config);
         errdefer index.deinit();
         try index.build(self.points.items);
-        self.hnsw_index = index;
-        self.hnsw_stale = false;
+        self.hnsw_state = .{ .fresh = index };
     }
 
     pub fn freeSearchResults(self: *const Collection, results: []SearchResult) void {
@@ -146,8 +138,7 @@ pub const Collection = struct {
             .dimension = loaded.dimension,
             .metric = loaded.metric,
             .points = loaded.points,
-            .hnsw_index = null,
-            .hnsw_stale = false,
+            .hnsw_state = .none,
         };
         loaded.name = &.{};
         loaded.points = .empty;
@@ -162,8 +153,25 @@ pub const Collection = struct {
     }
 
     fn markHnswStale(self: *Collection) void {
-        if (self.hnsw_index != null) {
-            self.hnsw_stale = true;
+        switch (self.hnsw_state) {
+            .none => {},
+            .stale => {},
+            .fresh => |index| self.hnsw_state = .{ .stale = index },
         }
     }
+
+    fn deinitHnswState(self: *Collection) void {
+        switch (self.hnsw_state) {
+            .none => {},
+            .fresh => |*index| index.deinit(),
+            .stale => |*index| index.deinit(),
+        }
+        self.hnsw_state = .none;
+    }
+};
+
+const HnswState = union(enum) {
+    none,
+    fresh: HnswIndex,
+    stale: HnswIndex,
 };

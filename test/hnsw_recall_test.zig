@@ -22,6 +22,7 @@ test "hnsw top-1 matches flat on simple dataset" {
 }
 
 test "hnsw top-k has substantial overlap with flat" {
+    const min_expected_overlap: usize = 7; // Deterministic dataset/config target for Phase 3 simplified HNSW.
     var c = try mneme.Collection.init(std.testing.allocator, "docs", 16, .cosine);
     defer c.deinit();
 
@@ -58,5 +59,5 @@ test "hnsw top-k has substantial overlap with flat" {
             }
         }
     }
-    try std.testing.expect(overlap >= 7);
+    try std.testing.expect(overlap >= min_expected_overlap);
 }
