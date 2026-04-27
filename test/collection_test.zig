@@ -43,7 +43,7 @@ test "search empty collection" {
 
     const query = [_]f32{ 1.0, 0.0, 0.0 };
     const results = try collection.search(&query, 10);
-    defer std.testing.allocator.free(results);
+    defer collection.freeSearchResults(results);
 
     try std.testing.expectEqual(@as(usize, 0), results.len);
 }
@@ -61,10 +61,25 @@ test "search returns top-k ordered results" {
 
     const query = [_]f32{ 1.0, 0.0, 0.0 };
     const results = try collection.search(&query, 2);
-    defer std.testing.allocator.free(results);
+    defer collection.freeSearchResults(results);
 
     try std.testing.expectEqual(@as(usize, 2), results.len);
     try std.testing.expect(std.mem.eql(u8, "a", results[0].id));
     try std.testing.expect(std.mem.eql(u8, "c", results[1].id));
     try std.testing.expect(results[0].score >= results[1].score);
+}
+
+test "search result ids remain valid after collection mutation" {
+    var collection = try mneme.Collection.init(std.testing.allocator, "docs", 3, .cosine);
+    defer collection.deinit();
+
+    const a = [_]f32{ 1.0, 0.0, 0.0 };
+    try collection.insert("a", &a, null);
+
+    const query = [_]f32{ 1.0, 0.0, 0.0 };
+    const results = try collection.search(&query, 1);
+    defer collection.freeSearchResults(results);
+
+    try collection.delete("a");
+    try std.testing.expect(std.mem.eql(u8, "a", results[0].id));
 }

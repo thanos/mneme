@@ -48,7 +48,8 @@ pub const Collection = struct {
 
         if (self.findPointIndex(id) != null) return MnemeError.DuplicateId;
 
-        const point = try Point.init(self.allocator, id, input_vector, metadata);
+        var point = try Point.init(self.allocator, id, input_vector, metadata);
+        errdefer point.deinit(self.allocator);
         try self.points.append(self.allocator, point);
     }
 
@@ -66,6 +67,10 @@ pub const Collection = struct {
     pub fn search(self: *const Collection, query_vector: []const f32, top_k: usize) ![]SearchResult {
         try vector.ensureDimension(query_vector, self.dimension);
         return FlatIndex.search(self.allocator, self.points.items, query_vector, top_k, self.metric);
+    }
+
+    pub fn freeSearchResults(self: *const Collection, results: []SearchResult) void {
+        FlatIndex.freeSearchResults(self.allocator, results);
     }
 
     fn findPointIndex(self: *const Collection, id: []const u8) ?usize {

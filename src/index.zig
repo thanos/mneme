@@ -8,7 +8,7 @@ pub const Metric = enum {
 };
 
 pub const SearchResult = struct {
-    id: []const u8,
+    id: []u8,
     score: f32,
 };
 
@@ -42,8 +42,31 @@ pub const FlatIndex = struct {
 
         const n = @min(top_k, scored.items.len);
         const results = try allocator.alloc(SearchResult, n);
-        @memcpy(results, scored.items[0..n]);
+        var initialized: usize = 0;
+        errdefer {
+            var idx: usize = 0;
+            while (idx < initialized) : (idx += 1) {
+                allocator.free(results[idx].id);
+            }
+            allocator.free(results);
+        }
+
+        var idx: usize = 0;
+        while (idx < n) : (idx += 1) {
+            results[idx] = .{
+                .id = try allocator.dupe(u8, scored.items[idx].id),
+                .score = scored.items[idx].score,
+            };
+            initialized += 1;
+        }
         return results;
+    }
+
+    pub fn freeSearchResults(allocator: std.mem.Allocator, results: []SearchResult) void {
+        for (results) |result| {
+            allocator.free(result.id);
+        }
+        allocator.free(results);
     }
 
     fn lessThanByScoreDesc(_: void, left: SearchResult, right: SearchResult) bool {

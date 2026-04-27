@@ -39,7 +39,7 @@ pub fn main() !void {
     }
 
     const results = try collection.search(query, 10);
-    defer allocator.free(results);
+    defer collection.freeSearchResults(results);
 
     var end_tv: std.c.timeval = undefined;
     _ = std.c.gettimeofday(&end_tv, null);

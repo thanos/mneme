@@ -20,7 +20,7 @@ test "flat index scans points and returns top-k" {
         2,
         .cosine,
     );
-    defer std.testing.allocator.free(results);
+    defer mneme.FlatIndex.freeSearchResults(std.testing.allocator, results);
 
     try std.testing.expectEqual(@as(usize, 2), results.len);
     try std.testing.expect(std.mem.eql(u8, "a", results[0].id));
@@ -42,7 +42,7 @@ test "top-k larger than available data works" {
         10,
         .cosine,
     );
-    defer std.testing.allocator.free(results);
+    defer mneme.FlatIndex.freeSearchResults(std.testing.allocator, results);
 
     try std.testing.expectEqual(@as(usize, 1), results.len);
     try std.testing.expect(std.mem.eql(u8, "a", results[0].id));
