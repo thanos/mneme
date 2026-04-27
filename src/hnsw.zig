@@ -121,7 +121,7 @@ pub const HnswIndex = struct {
         if (self.visit_marks.items.len < self.nodes.items.len + 1) {
             try self.ensureVisitMarksLen(self.nodes.items.len + 1);
         }
-        const query_norm = try vector.norm(point_vector);
+        const query_norm = try self.resolvePointNorm(point_index, point_vector);
         const level = self.randomLevel();
         const node_index = try self.addNode(point_index, level);
 
@@ -179,7 +179,7 @@ pub const HnswIndex = struct {
     }
 
     pub fn search(
-        self: *const HnswIndex,
+        self: *HnswIndex,
         points: []const Point,
         query: []const f32,
         top_k: usize,
@@ -202,15 +202,14 @@ pub const HnswIndex = struct {
             current = try self.greedySearchAtLayer(points, query, query_norm, current, @as(usize, @intCast(layer)));
         }
 
-        var mutable_self = @constCast(self);
-        if (mutable_self.visit_marks.items.len < mutable_self.nodes.items.len) {
-            try mutable_self.ensureVisitMarksLen(mutable_self.nodes.items.len);
+        if (self.visit_marks.items.len < self.nodes.items.len) {
+            try self.ensureVisitMarksLen(self.nodes.items.len);
         }
-        const epoch = mutable_self.nextVisitEpoch();
-        try mutable_self.searchLayerInPlace(points, query, query_norm, current, ef, 0, epoch);
-        std.mem.sort(ScoredNode, mutable_self.scratch_results.items, {}, lessThanByScoreDesc);
+        const epoch = self.nextVisitEpoch();
+        try self.searchLayerInPlace(points, query, query_norm, current, ef, 0, epoch);
+        std.mem.sort(ScoredNode, self.scratch_results.items, {}, lessThanByScoreDesc);
 
-        const result_count = @min(top_k, mutable_self.scratch_results.items.len);
+        const result_count = @min(top_k, self.scratch_results.items.len);
         const results = try self.allocator.alloc(SearchResult, result_count);
         var initialized: usize = 0;
         errdefer {
@@ -223,10 +222,10 @@ pub const HnswIndex = struct {
 
         var idx: usize = 0;
         while (idx < result_count) : (idx += 1) {
-            const point = points[self.nodes.items[mutable_self.scratch_results.items[idx].node_index].point_index];
+            const point = points[self.nodes.items[self.scratch_results.items[idx].node_index].point_index];
             results[idx] = .{
                 .id = try self.allocator.dupe(u8, point.id),
-                .score = mutable_self.scratch_results.items[idx].score,
+                .score = self.scratch_results.items[idx].score,
             };
             initialized += 1;
         }
@@ -449,6 +448,13 @@ pub const HnswIndex = struct {
         const norm_b = query_norm;
         if (norm_a == 0.0 or norm_b == 0.0) return MnemeError.ZeroVector;
         return dot_product / (norm_a * norm_b);
+    }
+
+    fn resolvePointNorm(self: *const HnswIndex, point_index: usize, point_vector: []const f32) !f32 {
+        if (point_index < self.point_norms.items.len) {
+            return self.point_norms.items[point_index];
+        }
+        return vector.norm(point_vector);
     }
 
     pub fn stats(self: *const HnswIndex, allocator: std.mem.Allocator) !HnswStats {

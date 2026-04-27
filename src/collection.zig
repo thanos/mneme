@@ -79,7 +79,7 @@ pub const Collection = struct {
     }
 
     pub fn searchWithOptions(
-        self: *const Collection,
+        self: *Collection,
         query_vector: []const f32,
         top_k: usize,
         options: SearchOptions,
