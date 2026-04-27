@@ -2,7 +2,7 @@
 
 `mneme` is an embedded-first vector / memory database core written in Zig.
 
-The project currently implements **Phase 1**: a minimal, correctness-first in-memory engine.
+The project currently implements **Phase 1 + Phase 2**: an in-memory engine with canonical persistence.
 
 ## Phase 1 Supports
 
@@ -19,7 +19,6 @@ The project currently implements **Phase 1**: a minimal, correctness-first in-me
 
 ## Not Supported Yet
 
-- persistence
 - approximate indexes (HNSW/IVF)
 - metadata filtering
 - network server mode
@@ -58,6 +57,9 @@ Runs:
 - load collection
 - search after load
 
+The benchmark includes a soft regression warning if any stage exceeds 60 seconds.
+The benchmark save path uses `saveToFileWithOptions(..., .{ .fsync_on_save = false })` to measure non-durable write throughput.
+
 ## Minimal Example
 
 ```zig
@@ -88,6 +90,28 @@ pub fn main() !void {
 ## Notes
 
 - `prompts/` contains local planning artifacts and is not part of the runtime package API.
+- The `.mneme` format is versioned. Unknown versions fail fast with `UnsupportedVersion`.
+- Phase 2 canonical files persist collection metadata + points only; index state is derived and rebuilt.
+- Phase 2 rejects trailing bytes as `CorruptRecord` (strict v1 parser).
+- Phase 2 files include a CRC32 footer checksum over the encoded payload.
+
+## Format Compatibility Policy
+
+- File format changes must increment `format_version`.
+- New readers should keep support for prior stable format versions whenever practical.
+- Unknown future versions fail safely with `UnsupportedVersion`.
+
+## Persistence Errors
+
+`loadFromFile` / `storage.loadCollection` may return:
+
+- `InvalidMagic`
+- `UnsupportedVersion`
+- `InvalidMetric`
+- `InvalidDimension`
+- `TruncatedFile`
+- `VectorLengthMismatch`
+- `CorruptRecord`
 
 ## Roadmap
 

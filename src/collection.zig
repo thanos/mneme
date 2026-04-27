@@ -75,19 +75,38 @@ pub const Collection = struct {
     }
 
     pub fn saveToFile(self: *const Collection, path: []const u8) !void {
-        try storage.saveCollection(path, self.name, self.dimension, self.metric, self.points.items);
+        try storage.saveCollection(self.allocator, path, self.name, self.dimension, self.metric, self.points.items);
+    }
+
+    pub fn saveToFileWithOptions(
+        self: *const Collection,
+        path: []const u8,
+        options: storage.SaveOptions,
+    ) !void {
+        try storage.saveCollectionWithOptions(
+            self.allocator,
+            path,
+            self.name,
+            self.dimension,
+            self.metric,
+            self.points.items,
+            options,
+        );
     }
 
     pub fn loadFromFile(allocator: std.mem.Allocator, path: []const u8) !Collection {
         var loaded = try storage.loadCollection(path, allocator);
-        defer loaded.deinit(allocator);
+        errdefer loaded.deinit();
 
-        var collection = try Collection.init(allocator, loaded.name, loaded.dimension, loaded.metric);
-        errdefer collection.deinit();
-
-        for (loaded.points) |point| {
-            try collection.insert(point.id, point.vector, point.metadata);
-        }
+        const collection = Collection{
+            .allocator = allocator,
+            .name = loaded.name,
+            .dimension = loaded.dimension,
+            .metric = loaded.metric,
+            .points = loaded.points,
+        };
+        loaded.name = &.{};
+        loaded.points = .empty;
         return collection;
     }
 

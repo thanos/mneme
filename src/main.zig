@@ -36,7 +36,7 @@ pub fn main() !void {
     var insert_done_tv: std.c.timeval = undefined;
     _ = std.c.gettimeofday(&insert_done_tv, null);
 
-    try collection.saveToFile(path);
+    try collection.saveToFileWithOptions(path, .{ .fsync_on_save = false });
     var save_done_tv: std.c.timeval = undefined;
     _ = std.c.gettimeofday(&save_done_tv, null);
 
@@ -71,5 +71,12 @@ pub fn main() !void {
 fn deltaMs(start_tv: std.c.timeval, end_tv: std.c.timeval) f64 {
     const start_us: i128 = @as(i128, start_tv.sec) * 1_000_000 + @as(i128, start_tv.usec);
     const end_us: i128 = @as(i128, end_tv.sec) * 1_000_000 + @as(i128, end_tv.usec);
-    return @as(f64, @floatFromInt(end_us - start_us)) / 1_000.0;
+    const elapsed_ms = @as(f64, @floatFromInt(end_us - start_us)) / 1_000.0;
+    if (elapsed_ms > 60_000.0) {
+        std.debug.print(
+            "warning: benchmark stage took {d:.3} ms (> 60000 ms soft threshold)\n",
+            .{elapsed_ms},
+        );
+    }
+    return elapsed_ms;
 }

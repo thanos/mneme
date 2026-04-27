@@ -2,7 +2,7 @@ const std = @import("std");
 const Metric = @import("index.zig").Metric;
 const MnemeError = @import("errors.zig").MnemeError;
 
-pub const format_version: u32 = 1;
+pub const format_version: u32 = 2;
 const magic = "MNEME";
 const null_metadata_len = std.math.maxInt(u32);
 
@@ -58,7 +58,8 @@ pub const MemoryReader = struct {
     index: usize = 0,
 
     pub fn readNoEof(self: *MemoryReader, dest: []u8) !void {
-        if (self.index + dest.len > self.data.len) return error.EndOfStream;
+        if (self.index > self.data.len) return error.EndOfStream;
+        if (dest.len > self.data.len - self.index) return error.EndOfStream;
         @memcpy(dest, self.data[self.index .. self.index + dest.len]);
         self.index += dest.len;
     }
@@ -110,8 +111,12 @@ pub fn writePointRecord(
 
     const vector_len = std.math.cast(u32, vector.len) orelse return MnemeError.CorruptRecord;
     try writer.writeInt(u32, vector_len, .little);
-    for (vector) |value| {
-        try writer.writeInt(u32, @as(u32, @bitCast(value)), .little);
+    if (@import("builtin").cpu.arch.endian() == .little) {
+        try writer.writeAll(std.mem.sliceAsBytes(vector));
+    } else {
+        for (vector) |value| {
+            try writer.writeInt(u32, @as(u32, @bitCast(value)), .little);
+        }
     }
 }
 
@@ -122,7 +127,7 @@ pub fn readHeader(reader: anytype, allocator: std.mem.Allocator) !DecodedHeader 
         .metric = .cosine,
         .point_count = 0,
     };
-    errdefer if (header.name.len > 0) allocator.free(header.name);
+    errdefer allocator.free(header.name);
 
     var magic_buf: [magic.len]u8 = undefined;
     readAllOrTruncated(reader, &magic_buf) catch return MnemeError.TruncatedFile;
@@ -178,9 +183,13 @@ pub fn readPointRecord(
     if (vector_len != expected_dimension) return MnemeError.VectorLengthMismatch;
 
     record.vector = try allocator.alloc(f32, vector_len);
-    for (record.vector) |*value| {
-        const bits = readIntOrTruncated(reader, u32) catch return MnemeError.TruncatedFile;
-        value.* = @as(f32, @bitCast(bits));
+    if (@import("builtin").cpu.arch.endian() == .little) {
+        readAllOrTruncated(reader, std.mem.sliceAsBytes(record.vector)) catch return MnemeError.TruncatedFile;
+    } else {
+        for (record.vector) |*value| {
+            const bits = readIntOrTruncated(reader, u32) catch return MnemeError.TruncatedFile;
+            value.* = @as(f32, @bitCast(bits));
+        }
     }
     return record;
 }
@@ -198,17 +207,17 @@ fn byteToMetric(value: u8) ?Metric {
     };
 }
 
-fn readIntOrTruncated(reader: anytype, comptime T: type) !T {
+fn readIntOrTruncated(reader: anytype, comptime T: type) MnemeError!T {
     return reader.readInt(T, .little) catch |err| return mapReadError(err);
 }
 
-fn readAllOrTruncated(reader: anytype, dest: []u8) !void {
+fn readAllOrTruncated(reader: anytype, dest: []u8) MnemeError!void {
     reader.readNoEof(dest) catch |err| return mapReadError(err);
 }
 
-fn mapReadError(err: anyerror) anyerror {
+fn mapReadError(err: anyerror) MnemeError {
     return switch (err) {
         error.EndOfStream => MnemeError.TruncatedFile,
-        else => err,
+        else => MnemeError.CorruptRecord,
     };
 }
