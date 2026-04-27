@@ -94,13 +94,15 @@ pub const HnswIndex = struct {
         try self.precomputePointNorms(points);
         try self.ensureVisitMarksLen(points.len);
         for (points, 0..) |point, point_index| {
-            try vector.ensureDimension(point.vector, self.dimension);
             try self.insert(points, point_index, point.vector);
         }
     }
 
     pub fn insert(self: *HnswIndex, points: []const Point, point_index: usize, point_vector: []const f32) !void {
         try vector.ensureDimension(point_vector, self.dimension);
+        if (self.visit_marks.items.len < self.nodes.items.len + 1) {
+            try self.ensureVisitMarksLen(self.nodes.items.len + 1);
+        }
         const query_norm = try vector.norm(point_vector);
         const level = self.randomLevel();
         const node_index = try self.addNode(point_index, level);
@@ -184,11 +186,15 @@ pub const HnswIndex = struct {
             current = try self.greedySearchAtLayer(points, query, query_norm, current, @as(usize, @intCast(layer)));
         }
 
-        var candidates = try self.searchLayer(points, query, query_norm, current, ef, 0);
-        defer candidates.deinit(self.allocator);
-        std.mem.sort(ScoredNode, candidates.items, {}, lessThanByScoreDesc);
+        var mutable_self = @constCast(self);
+        if (mutable_self.visit_marks.items.len < mutable_self.nodes.items.len) {
+            try mutable_self.ensureVisitMarksLen(mutable_self.nodes.items.len);
+        }
+        const epoch = mutable_self.nextVisitEpoch();
+        try mutable_self.searchLayerInPlace(points, query, query_norm, current, ef, 0, epoch);
+        std.mem.sort(ScoredNode, mutable_self.scratch_results.items, {}, lessThanByScoreDesc);
 
-        const result_count = @min(top_k, candidates.items.len);
+        const result_count = @min(top_k, mutable_self.scratch_results.items.len);
         const results = try self.allocator.alloc(SearchResult, result_count);
         var initialized: usize = 0;
         errdefer {
@@ -201,10 +207,10 @@ pub const HnswIndex = struct {
 
         var idx: usize = 0;
         while (idx < result_count) : (idx += 1) {
-            const point = points[self.nodes.items[candidates.items[idx].node_index].point_index];
+            const point = points[self.nodes.items[mutable_self.scratch_results.items[idx].node_index].point_index];
             results[idx] = .{
                 .id = try self.allocator.dupe(u8, point.id),
-                .score = candidates.items[idx].score,
+                .score = mutable_self.scratch_results.items[idx].score,
             };
             initialized += 1;
         }
@@ -232,6 +238,7 @@ pub const HnswIndex = struct {
         try self.point_norms.ensureTotalCapacity(self.allocator, points.len);
         for (points) |point| {
             const norm = try vector.norm(point.vector);
+            if (norm == 0.0) return MnemeError.ZeroVector;
             try self.point_norms.append(self.allocator, norm);
         }
     }
@@ -311,54 +318,6 @@ pub const HnswIndex = struct {
             }
         }
         return current;
-    }
-
-    fn searchLayer(
-        self: *const HnswIndex,
-        points: []const Point,
-        query: []const f32,
-        query_norm: f32,
-        entry_node: usize,
-        ef: usize,
-        layer: usize,
-    ) !std.ArrayList(ScoredNode) {
-        var visited = try self.allocator.alloc(bool, self.nodes.items.len);
-        defer self.allocator.free(visited);
-        @memset(visited, false);
-
-        var candidates: std.ArrayList(ScoredNode) = .empty;
-        defer candidates.deinit(self.allocator);
-        var results: std.ArrayList(ScoredNode) = .empty;
-        errdefer results.deinit(self.allocator);
-
-        const entry_score = try self.similarity(points, entry_node, query, query_norm);
-        try candidates.append(self.allocator, .{ .node_index = entry_node, .score = entry_score });
-        try results.append(self.allocator, .{ .node_index = entry_node, .score = entry_score });
-        visited[entry_node] = true;
-
-        while (candidates.items.len > 0) {
-            const best_idx = bestCandidateIndex(candidates.items);
-            const candidate = candidates.swapRemove(best_idx);
-            const worst_idx = worstResultIndex(results.items);
-            const worst_score = results.items[worst_idx].score;
-            if (results.items.len >= ef and candidate.score < worst_score) break;
-
-            for (self.nodes.items[candidate.node_index].neighbors_by_layer[layer].items) |neighbor| {
-                if (visited[neighbor]) continue;
-                visited[neighbor] = true;
-
-                const score = try self.similarity(points, neighbor, query, query_norm);
-                if (results.items.len < ef or score > results.items[worstResultIndex(results.items)].score) {
-                    try candidates.append(self.allocator, .{ .node_index = neighbor, .score = score });
-                    try results.append(self.allocator, .{ .node_index = neighbor, .score = score });
-                    if (results.items.len > ef) {
-                        _ = results.swapRemove(worstResultIndex(results.items));
-                    }
-                }
-            }
-        }
-
-        return results;
     }
 
     fn searchLayerInPlace(

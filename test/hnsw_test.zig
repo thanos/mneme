@@ -8,16 +8,16 @@ fn buildPoint(allocator: std.mem.Allocator, id: []const u8, v: []const f32) !mne
 test "hnsw invalid config rejected" {
     try std.testing.expectError(
         mneme.MnemeError.InvalidIndexConfig,
-        mneme.HnswIndex.init(std.testing.allocator, 3, .cosine, .{ .m = 0 }),
+        mneme.internal.HnswIndex.init(std.testing.allocator, 3, .cosine, .{ .m = 0 }),
     );
     try std.testing.expectError(
         mneme.MnemeError.InvalidIndexConfig,
-        mneme.HnswIndex.init(std.testing.allocator, 3, .cosine, .{ .m = 8, .ef_construction = 4 }),
+        mneme.internal.HnswIndex.init(std.testing.allocator, 3, .cosine, .{ .m = 8, .ef_construction = 4 }),
     );
 }
 
 test "hnsw build empty and search returns empty" {
-    var index = try mneme.HnswIndex.init(std.testing.allocator, 3, .cosine, .{});
+    var index = try mneme.internal.HnswIndex.init(std.testing.allocator, 3, .cosine, .{});
     defer index.deinit();
 
     const points = [_]mneme.Point{};
@@ -36,7 +36,7 @@ test "hnsw build one-point collection returns that point" {
     defer point.deinit(std.testing.allocator);
     const points = [_]mneme.Point{point};
 
-    var index = try mneme.HnswIndex.init(std.testing.allocator, 3, .cosine, .{});
+    var index = try mneme.internal.HnswIndex.init(std.testing.allocator, 3, .cosine, .{});
     defer index.deinit();
     try index.build(&points);
     try std.testing.expect(index.entry_point != null);
@@ -63,9 +63,9 @@ test "hnsw deterministic level generation with seed" {
         for (&points_buf) |*p| p.deinit(std.testing.allocator);
     }
 
-    var a = try mneme.HnswIndex.init(std.testing.allocator, 3, .cosine, .{ .seed = 9 });
+    var a = try mneme.internal.HnswIndex.init(std.testing.allocator, 3, .cosine, .{ .seed = 9 });
     defer a.deinit();
-    var b = try mneme.HnswIndex.init(std.testing.allocator, 3, .cosine, .{ .seed = 9 });
+    var b = try mneme.internal.HnswIndex.init(std.testing.allocator, 3, .cosine, .{ .seed = 9 });
     defer b.deinit();
     try a.build(&points_buf);
     try b.build(&points_buf);
@@ -86,7 +86,7 @@ test "hnsw search top-k sorted and query dimension mismatch fails" {
         for (&points) |*p| p.deinit(std.testing.allocator);
     }
 
-    var index = try mneme.HnswIndex.init(std.testing.allocator, 3, .cosine, .{ .seed = 42 });
+    var index = try mneme.internal.HnswIndex.init(std.testing.allocator, 3, .cosine, .{ .seed = 42 });
     defer index.deinit();
     try index.build(&points);
 

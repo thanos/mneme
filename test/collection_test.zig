@@ -14,6 +14,15 @@ fn pointInitNoLeak(allocator: std.mem.Allocator) !void {
     defer point.deinit(allocator);
 }
 
+fn buildHnswNoLeak(allocator: std.mem.Allocator) !void {
+    var collection = try mneme.Collection.init(allocator, "docs", 3, .cosine);
+    defer collection.deinit();
+    try collection.insert("a", &[_]f32{ 1.0, 0.0, 0.0 }, null);
+    try collection.insert("b", &[_]f32{ 0.9, 0.1, 0.0 }, null);
+    try collection.insert("c", &[_]f32{ 0.0, 1.0, 0.0 }, null);
+    try collection.buildHnsw(.{ .m = 8, .ef_construction = 32, .ef_search = 16, .seed = 7 });
+}
+
 test "create collection" {
     var collection = try mneme.Collection.init(std.testing.allocator, "docs", 3, .cosine);
     defer collection.deinit();
@@ -27,6 +36,10 @@ test "point init handles allocation failures without leaks" {
 
 test "insert handles allocation failures without leaks" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, insertOnceNoLeak, .{});
+}
+
+test "buildHnsw handles allocation failures without leaks" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, buildHnswNoLeak, .{});
 }
 
 test "reject zero dimension collection" {
