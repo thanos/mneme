@@ -99,17 +99,13 @@ test "load with trailing bytes fails" {
     defer helpers.deleteFile(path);
     try collection.saveToFile(path);
 
-    const fd = try std.posix.openat(
-        std.posix.AT.FDCWD,
-        path,
-        .{ .ACCMODE = .WRONLY },
-        0,
-    );
-    defer _ = std.c.close(fd);
-    const seek_rc = std.c.lseek(fd, 0, std.c.SEEK.END);
-    try std.testing.expect(seek_rc >= 0);
-    const write_rc = std.c.write(fd, "x".ptr, 1);
-    try std.testing.expect(write_rc == 1);
+    const bytes = try helpers.readBytes(allocator, path);
+    defer allocator.free(bytes);
+    const with_trailing = try allocator.alloc(u8, bytes.len + 1);
+    defer allocator.free(with_trailing);
+    @memcpy(with_trailing[0..bytes.len], bytes);
+    with_trailing[bytes.len] = 'x';
+    try helpers.writeBytes(path, with_trailing);
 
     try std.testing.expectError(
         mneme.MnemeError.CorruptRecord,
@@ -133,17 +129,10 @@ test "load with checksum mismatch fails" {
     defer helpers.deleteFile(path);
     try collection.saveToFile(path);
 
-    const fd = try std.posix.openat(
-        std.posix.AT.FDCWD,
-        path,
-        .{ .ACCMODE = .WRONLY },
-        0,
-    );
-    defer _ = std.c.close(fd);
-    const checksum_start = std.c.lseek(fd, -4, std.c.SEEK.END);
-    try std.testing.expect(checksum_start >= 0);
-    const write_rc = std.c.write(fd, "\xFF".ptr, 1);
-    try std.testing.expect(write_rc == 1);
+    var bytes = try helpers.readBytes(allocator, path);
+    defer allocator.free(bytes);
+    bytes[bytes.len - 1] ^= 0xFF;
+    try helpers.writeBytes(path, bytes);
 
     try std.testing.expectError(
         mneme.MnemeError.CorruptRecord,
@@ -167,17 +156,10 @@ test "truncated checksum footer fails" {
     defer helpers.deleteFile(path);
     try collection.saveToFile(path);
 
-    const fd = try std.posix.openat(
-        std.posix.AT.FDCWD,
-        path,
-        .{ .ACCMODE = .WRONLY },
-        0,
-    );
-    defer _ = std.c.close(fd);
-    const end = std.c.lseek(fd, 0, std.c.SEEK.END);
-    try std.testing.expect(end > 0);
-    const truncate_rc = std.c.ftruncate(fd, end - 1);
-    try std.testing.expect(truncate_rc == 0);
+    var bytes = try helpers.readBytes(allocator, path);
+    defer allocator.free(bytes);
+    try std.testing.expect(bytes.len > 0);
+    try helpers.writeBytes(path, bytes[0 .. bytes.len - 1]);
 
     try std.testing.expectError(
         mneme.MnemeError.TruncatedFile,
@@ -193,5 +175,21 @@ test "non-existent path fails cleanly" {
     try std.testing.expectError(
         error.FileNotFound,
         mneme.storage.loadCollection(path, std.testing.allocator),
+    );
+}
+
+test "save rejects path containing nul byte" {
+    var ctx: helpers.TestCtx = .{};
+    defer ctx.deinit();
+    const allocator = ctx.allocator();
+
+    var collection = try mneme.Collection.init(allocator, "docs", 3, .cosine);
+    defer collection.deinit();
+    try collection.insert("doc_1", &[_]f32{ 1.0, 0.0, 0.0 }, null);
+
+    const bad_path = "bad\x00path.mneme";
+    try std.testing.expectError(
+        mneme.MnemeError.CorruptRecord,
+        collection.saveToFile(bad_path),
     );
 }

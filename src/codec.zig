@@ -5,6 +5,11 @@ const MnemeError = @import("errors.zig").MnemeError;
 pub const format_version: u32 = 2;
 const magic = "MNEME";
 const null_metadata_len = std.math.maxInt(u32);
+pub const max_name_len: usize = 1024;
+pub const max_id_len: usize = 1024;
+pub const max_metadata_len: usize = 64 * 1024;
+pub const max_dimension: usize = 4096;
+pub const max_point_count: usize = 10_000_000;
 
 pub const FileHeader = struct {
     name: []const u8,
@@ -82,11 +87,14 @@ pub fn writeHeader(writer: anytype, header: FileHeader) !void {
     try writer.writeAll(magic);
     try writer.writeInt(u32, format_version, .little);
     const dim = std.math.cast(u32, header.dimension) orelse return MnemeError.InvalidDimension;
+    if (header.dimension > max_dimension) return MnemeError.InvalidDimension;
     try writer.writeInt(u32, dim, .little);
     try writer.writeByte(metricToByte(header.metric));
     const name_len = std.math.cast(u32, header.name.len) orelse return MnemeError.CorruptRecord;
+    if (header.name.len > max_name_len) return MnemeError.CorruptRecord;
     try writer.writeInt(u32, name_len, .little);
     try writer.writeAll(header.name);
+    if (header.point_count > max_point_count) return MnemeError.CorruptRecord;
     const point_count = std.math.cast(u64, header.point_count) orelse return MnemeError.CorruptRecord;
     try writer.writeInt(u64, point_count, .little);
 }
@@ -98,11 +106,13 @@ pub fn writePointRecord(
     vector: []const f32,
 ) !void {
     const id_len = std.math.cast(u32, id.len) orelse return MnemeError.CorruptRecord;
+    if (id.len > max_id_len) return MnemeError.CorruptRecord;
     try writer.writeInt(u32, id_len, .little);
     try writer.writeAll(id);
 
     if (metadata) |value| {
         const metadata_len = std.math.cast(u32, value.len) orelse return MnemeError.CorruptRecord;
+        if (value.len > max_metadata_len) return MnemeError.CorruptRecord;
         try writer.writeInt(u32, metadata_len, .little);
         try writer.writeAll(value);
     } else {
@@ -110,6 +120,7 @@ pub fn writePointRecord(
     }
 
     const vector_len = std.math.cast(u32, vector.len) orelse return MnemeError.CorruptRecord;
+    if (vector.len > max_dimension) return MnemeError.CorruptRecord;
     try writer.writeInt(u32, vector_len, .little);
     if (@import("builtin").cpu.arch.endian() == .little) {
         try writer.writeAll(std.mem.sliceAsBytes(vector));
@@ -138,17 +149,20 @@ pub fn readHeader(reader: anytype, allocator: std.mem.Allocator) !DecodedHeader 
 
     const dimension = readIntOrTruncated(reader, u32) catch return MnemeError.TruncatedFile;
     if (dimension == 0) return MnemeError.InvalidDimension;
+    if (dimension > max_dimension) return MnemeError.CorruptRecord;
     header.dimension = dimension;
 
     const metric_byte = reader.readByte() catch |err| return mapReadError(err);
     header.metric = byteToMetric(metric_byte) orelse return MnemeError.InvalidMetric;
 
     const name_len = readIntOrTruncated(reader, u32) catch return MnemeError.TruncatedFile;
+    if (name_len > max_name_len) return MnemeError.CorruptRecord;
     header.name = try allocator.alloc(u8, name_len);
     readAllOrTruncated(reader, header.name) catch return MnemeError.TruncatedFile;
 
     const point_count = readIntOrTruncated(reader, u64) catch return MnemeError.TruncatedFile;
     header.point_count = std.math.cast(usize, point_count) orelse return MnemeError.CorruptRecord;
+    if (header.point_count > max_point_count) return MnemeError.CorruptRecord;
     return header;
 }
 
@@ -157,6 +171,7 @@ pub fn readPointRecord(
     allocator: std.mem.Allocator,
     expected_dimension: usize,
 ) !DecodedPointRecord {
+    if (expected_dimension == 0 or expected_dimension > max_dimension) return MnemeError.CorruptRecord;
     var record = DecodedPointRecord{
         .id = &.{},
         .metadata = null,
@@ -169,17 +184,20 @@ pub fn readPointRecord(
     }
 
     const id_len = readIntOrTruncated(reader, u32) catch return MnemeError.TruncatedFile;
+    if (id_len > max_id_len) return MnemeError.CorruptRecord;
     record.id = try allocator.alloc(u8, id_len);
     readAllOrTruncated(reader, record.id) catch return MnemeError.TruncatedFile;
 
     const metadata_len = readIntOrTruncated(reader, u32) catch return MnemeError.TruncatedFile;
     if (metadata_len != null_metadata_len) {
+        if (metadata_len > max_metadata_len) return MnemeError.CorruptRecord;
         const metadata = try allocator.alloc(u8, metadata_len);
         record.metadata = metadata;
         readAllOrTruncated(reader, metadata) catch return MnemeError.TruncatedFile;
     }
 
     const vector_len = readIntOrTruncated(reader, u32) catch return MnemeError.TruncatedFile;
+    if (vector_len > max_dimension) return MnemeError.CorruptRecord;
     if (vector_len != expected_dimension) return MnemeError.VectorLengthMismatch;
 
     record.vector = try allocator.alloc(f32, vector_len);

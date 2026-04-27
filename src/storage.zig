@@ -44,8 +44,10 @@ pub fn saveCollectionWithOptions(
     points: []const Point,
     options: SaveOptions,
 ) !void {
+    try ensurePathHasNoNul(path);
     const tmp_path = try std.fmt.allocPrint(allocator, "{s}.tmp", .{path});
     defer allocator.free(tmp_path);
+    try ensurePathHasNoNul(tmp_path);
     const tmp_path_z = try allocator.dupeSentinel(u8, tmp_path, 0);
     defer allocator.free(tmp_path_z);
     const path_z = try allocator.dupeSentinel(u8, path, 0);
@@ -57,8 +59,8 @@ pub fn saveCollectionWithOptions(
         .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true },
         0o644,
     );
-    defer _ = std.c.close(fd);
-    errdefer _ = std.c.unlinkat(std.posix.AT.FDCWD, tmp_path_z, 0);
+    defer closeFd(fd);
+    errdefer unlinkAt(std.posix.AT.FDCWD, tmp_path_z, 0);
 
     var writer = FileWriter{ .fd = fd };
 
@@ -73,10 +75,9 @@ pub fn saveCollectionWithOptions(
     }
     const checksum = writer.checksum.final();
     try writer.writeIntRaw(u32, checksum, .little);
-    if (options.fsync_on_save and std.c.fsync(fd) != 0) return error.InputOutput;
-    if (std.c.renameat(std.posix.AT.FDCWD, tmp_path_z, std.posix.AT.FDCWD, path_z) != 0) {
-        return error.InputOutput;
-    }
+    if (options.fsync_on_save) try fsyncFd(fd);
+    try renameAt(std.posix.AT.FDCWD, tmp_path_z, std.posix.AT.FDCWD, path_z);
+    if (options.fsync_on_save) try fsyncParentDir(path);
 }
 
 pub fn loadCollection(path: []const u8, allocator: std.mem.Allocator) !LoadedCollectionData {
@@ -86,7 +87,7 @@ pub fn loadCollection(path: []const u8, allocator: std.mem.Allocator) !LoadedCol
         .{ .ACCMODE = .RDONLY },
         0,
     );
-    defer _ = std.c.close(fd);
+    defer closeFd(fd);
     var reader = FileReader{ .fd = fd };
     const header = try codec.readHeader(&reader, allocator);
     errdefer allocator.free(header.name);
@@ -136,8 +137,8 @@ const FileWriter = struct {
     fn writeAllRaw(self: *FileWriter, data: []const u8) !void {
         var index: usize = 0;
         while (index < data.len) {
-            const rc = std.c.write(self.fd, data[index..].ptr, data.len - index);
-            switch (std.c.errno(rc)) {
+            const rc = std.posix.system.write(self.fd, data[index..].ptr, data.len - index);
+            switch (std.posix.errno(rc)) {
                 .SUCCESS => {},
                 .INTR => continue,
                 else => return error.InputOutput,
@@ -178,7 +179,13 @@ const FileReader = struct {
     fn readNoEofRaw(self: *FileReader, dest: []u8) !void {
         var index: usize = 0;
         while (index < dest.len) {
-            const n = try std.posix.read(self.fd, dest[index..]);
+            const rc = std.posix.system.read(self.fd, dest[index..].ptr, dest.len - index);
+            switch (std.posix.errno(rc)) {
+                .SUCCESS => {},
+                .INTR => continue,
+                else => return error.InputOutput,
+            }
+            const n: usize = @intCast(rc);
             if (n == 0) return error.EndOfStream;
             index += n;
         }
@@ -214,4 +221,58 @@ fn readIntRawOrMappedError(reader: *FileReader, comptime T: type) MnemeError!T {
         error.EndOfStream => MnemeError.TruncatedFile,
         else => MnemeError.CorruptRecord,
     };
+}
+
+fn closeFd(fd: std.posix.fd_t) void {
+    _ = std.posix.system.close(fd);
+}
+
+fn unlinkAt(dirfd: std.posix.fd_t, path: [*:0]const u8, flags: u32) void {
+    _ = std.posix.system.unlinkat(dirfd, path, flags);
+}
+
+fn fsyncFd(fd: std.posix.fd_t) error{InputOutput}!void {
+    switch (std.posix.errno(std.posix.system.fsync(fd))) {
+        .SUCCESS => return,
+        else => return error.InputOutput,
+    }
+}
+
+fn renameAt(
+    old_dirfd: std.posix.fd_t,
+    old_path: [*:0]const u8,
+    new_dirfd: std.posix.fd_t,
+    new_path: [*:0]const u8,
+) error{InputOutput}!void {
+    switch (std.posix.errno(std.posix.system.renameat(old_dirfd, old_path, new_dirfd, new_path))) {
+        .SUCCESS => return,
+        else => return error.InputOutput,
+    }
+}
+
+fn fsyncParentDir(path: []const u8) error{InputOutput}!void {
+    const dirname = parentDirPath(path);
+    const dir_fd = std.posix.openat(
+        std.posix.AT.FDCWD,
+        dirname,
+        .{ .ACCMODE = .RDONLY },
+        0,
+    ) catch return error.InputOutput;
+    defer closeFd(dir_fd);
+    try fsyncFd(dir_fd);
+}
+
+fn ensurePathHasNoNul(path: []const u8) MnemeError!void {
+    if (std.mem.findScalar(u8, path, 0) != null) return MnemeError.CorruptRecord;
+}
+
+fn parentDirPath(path: []const u8) []const u8 {
+    const slash_idx = std.mem.findScalarLast(u8, path, '/');
+    const backslash_idx = std.mem.findScalarLast(u8, path, '\\');
+    const idx: usize = if (slash_idx) |sidx|
+        if (backslash_idx) |bidx| @max(sidx, bidx) else sidx
+    else
+        backslash_idx orelse return ".";
+    if (idx == 0) return path[0..1];
+    return path[0..idx];
 }

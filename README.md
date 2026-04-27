@@ -92,8 +92,9 @@ pub fn main() !void {
 - `prompts/` contains local planning artifacts and is not part of the runtime package API.
 - The `.mneme` format is versioned. Unknown versions fail fast with `UnsupportedVersion`.
 - Phase 2 canonical files persist collection metadata + points only; index state is derived and rebuilt.
-- Phase 2 rejects trailing bytes as `CorruptRecord` (strict v1 parser).
+- Current `.mneme` format (`format_version = 2`) rejects trailing bytes as `CorruptRecord` (strict parser).
 - Phase 2 files include a CRC32 footer checksum over the encoded payload.
+- Durable save mode (`fsync_on_save = true`) fsyncs both the data file and its parent directory after atomic rename.
 
 ## Format Compatibility Policy
 
