@@ -12,6 +12,11 @@ The project currently implements **Phase 1**: a minimal, correctness-first in-me
 - count vectors
 - search nearest vectors with flat scan and cosine similarity
 
+## Phase 2 Adds
+
+- save collection canonical data to a versioned binary file (`.mneme`)
+- load collection from file and rebuild in-memory search state
+
 ## Not Supported Yet
 
 - persistence
@@ -49,6 +54,9 @@ Runs:
 - insert 10,000 vectors
 - dimension 384
 - search top 10
+- save collection
+- load collection
+- search after load
 
 ## Minimal Example
 
@@ -70,6 +78,10 @@ pub fn main() !void {
     const query = [_]f32{ 1.0, 0.0, 0.0 };
     const results = try collection.search(&query, 10);
     defer collection.freeSearchResults(results);
+
+    try collection.saveToFile(".zig-cache/docs.mneme");
+    var loaded = try mneme.Collection.loadFromFile(allocator, ".zig-cache/docs.mneme");
+    defer loaded.deinit();
 }
 ```
 

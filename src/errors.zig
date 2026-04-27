@@ -4,4 +4,10 @@ pub const MnemeError = error{
     ZeroVector,
     DuplicateId,
     IdNotFound,
+    InvalidMagic,
+    UnsupportedVersion,
+    InvalidMetric,
+    TruncatedFile,
+    CorruptRecord,
+    VectorLengthMismatch,
 };
