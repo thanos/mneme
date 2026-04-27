@@ -137,7 +137,11 @@ const FileWriter = struct {
         var index: usize = 0;
         while (index < data.len) {
             const rc = std.c.write(self.fd, data[index..].ptr, data.len - index);
-            if (rc < 0) return error.InputOutput;
+            switch (std.c.errno(rc)) {
+                .SUCCESS => {},
+                .INTR => continue,
+                else => return error.InputOutput,
+            }
             const n: usize = @intCast(rc);
             if (n == 0) return error.InputOutput;
             index += n;
