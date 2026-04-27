@@ -12,6 +12,16 @@ pub const SearchResult = struct {
     score: f32,
 };
 
+pub const IndexKind = enum {
+    flat,
+    hnsw,
+};
+
+pub const SearchOptions = struct {
+    index: IndexKind = .flat,
+    ef_search: ?usize = null,
+};
+
 pub const FlatIndex = struct {
     pub fn search(
         allocator: std.mem.Allocator,

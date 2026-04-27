@@ -54,18 +54,62 @@ pub fn main() !void {
 
     const results = try loaded.search(query, 10);
     defer loaded.freeSearchResults(results);
+    var flat_done_tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&flat_done_tv, null);
+
+    try loaded.buildHnsw(.{
+        .m = 16,
+        .ef_construction = 128,
+        .ef_search = 64,
+        .seed = 42,
+    });
+    var hnsw_build_done_tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&hnsw_build_done_tv, null);
+
+    const ann_results = try loaded.searchWithOptions(query, 10, .{
+        .index = .hnsw,
+        .ef_search = 64,
+    });
+    defer loaded.freeSearchResults(ann_results);
 
     var end_tv: std.c.timeval = undefined;
     _ = std.c.gettimeofday(&end_tv, null);
     const insert_ms = deltaMs(start_tv, insert_done_tv);
     const save_ms = deltaMs(insert_done_tv, save_done_tv);
     const load_ms = deltaMs(save_done_tv, load_done_tv);
-    const search_ms = deltaMs(load_done_tv, end_tv);
+    const flat_search_ms = deltaMs(load_done_tv, flat_done_tv);
+    const hnsw_build_ms = deltaMs(flat_done_tv, hnsw_build_done_tv);
+    const hnsw_search_ms = deltaMs(hnsw_build_done_tv, end_tv);
+    const overlap = overlapCount(results, ann_results);
 
     std.debug.print(
-        "insert: {d:.3} ms | save: {d:.3} ms | load: {d:.3} ms | search(top {d}): {d:.3} ms\n",
-        .{ insert_ms, save_ms, load_ms, results.len, search_ms },
+        "insert: {d:.3} ms | save: {d:.3} ms | load: {d:.3} ms | flat(top {d}): {d:.3} ms | hnsw build: {d:.3} ms | hnsw(top {d}): {d:.3} ms | overlap: {d}/{d}\n",
+        .{
+            insert_ms,
+            save_ms,
+            load_ms,
+            results.len,
+            flat_search_ms,
+            hnsw_build_ms,
+            ann_results.len,
+            hnsw_search_ms,
+            overlap,
+            results.len,
+        },
     );
+}
+
+fn overlapCount(flat: []const mneme.SearchResult, ann: []const mneme.SearchResult) usize {
+    var overlap: usize = 0;
+    for (ann) |a| {
+        for (flat) |f| {
+            if (std.mem.eql(u8, a.id, f.id)) {
+                overlap += 1;
+                break;
+            }
+        }
+    }
+    return overlap;
 }
 
 fn deltaMs(start_tv: std.c.timeval, end_tv: std.c.timeval) f64 {

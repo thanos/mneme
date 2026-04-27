@@ -2,7 +2,7 @@
 
 `mneme` is an embedded-first vector / memory database core written in Zig.
 
-The project currently implements **Phase 1 + Phase 2**: an in-memory engine with canonical persistence.
+The project currently implements **Phase 1 + Phase 2 + Phase 3 (in-memory HNSW)**.
 
 ## Phase 1 Supports
 
@@ -17,9 +17,15 @@ The project currently implements **Phase 1 + Phase 2**: an in-memory engine with
 - save collection canonical data to a versioned binary file (`.mneme`)
 - load collection from file and rebuild in-memory search state
 
+## Phase 3 Adds
+
+- in-memory HNSW approximate nearest-neighbor search
+- `searchWithOptions` to select flat or HNSW at query time
+- `buildHnsw` to build derived ANN graph from canonical points
+
 ## Not Supported Yet
 
-- approximate indexes (HNSW/IVF)
+- persisted ANN indexes (including persisted HNSW graph)
 - metadata filtering
 - network server mode
 - Python/Elixir/C bindings
@@ -55,7 +61,10 @@ Runs:
 - search top 10
 - save collection
 - load collection
-- search after load
+- flat search after load
+- HNSW build
+- HNSW search after build
+- top-k overlap between flat and HNSW
 
 The benchmark includes a soft regression warning if any stage exceeds 60 seconds.
 The benchmark save path uses `saveToFileWithOptions(..., .{ .fsync_on_save = false })` to measure non-durable write throughput.
@@ -81,6 +90,18 @@ pub fn main() !void {
     const results = try collection.search(&query, 10);
     defer collection.freeSearchResults(results);
 
+    try collection.buildHnsw(.{
+        .m = 16,
+        .ef_construction = 128,
+        .ef_search = 64,
+        .seed = 42,
+    });
+    const ann_results = try collection.searchWithOptions(&query, 10, .{
+        .index = .hnsw,
+        .ef_search = 64,
+    });
+    defer collection.freeSearchResults(ann_results);
+
     try collection.saveToFile(".zig-cache/docs.mneme");
     var loaded = try mneme.Collection.loadFromFile(allocator, ".zig-cache/docs.mneme");
     defer loaded.deinit();
@@ -92,6 +113,7 @@ pub fn main() !void {
 - `prompts/` contains local planning artifacts and is not part of the runtime package API.
 - The `.mneme` format is versioned. Unknown versions fail fast with `UnsupportedVersion`.
 - Phase 2 canonical files persist collection metadata + points only; index state is derived and rebuilt.
+- HNSW graph state is derived and in-memory only in Phase 3; it is not persisted.
 - Current `.mneme` format (`format_version = 2`) rejects trailing bytes as `CorruptRecord` (strict parser).
 - Phase 2 files include a CRC32 footer checksum over the encoded payload.
 - Durable save mode (`fsync_on_save = true`) fsyncs both the data file and its parent directory after atomic rename.
@@ -117,9 +139,8 @@ pub fn main() !void {
 ## Roadmap
 
 - Phase 2: persistence
-- Phase 3: HNSW
-- Phase 4: C ABI
+- Phase 3: HNSW (implemented in-memory)
+- Phase 4: C ABI or metadata filtering
 - Phase 5: Python packaging
 - Phase 6: Elixir wrapper / server mode
-- Phase 7: metadata filtering
-- Phase 8: Apple Silicon acceleration
+- Later: HNSW persistence and SIMD acceleration

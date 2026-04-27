@@ -3,6 +3,9 @@ const Point = @import("point.zig").Point;
 const FlatIndex = @import("index.zig").FlatIndex;
 const SearchResult = @import("index.zig").SearchResult;
 const Metric = @import("index.zig").Metric;
+const SearchOptions = @import("index.zig").SearchOptions;
+const HnswIndex = @import("hnsw.zig").HnswIndex;
+const HnswConfig = @import("hnsw.zig").HnswConfig;
 const MnemeError = @import("errors.zig").MnemeError;
 const vector = @import("vector.zig");
 const storage = @import("storage.zig");
@@ -13,6 +16,8 @@ pub const Collection = struct {
     dimension: usize,
     metric: Metric,
     points: std.ArrayList(Point),
+    hnsw_index: ?HnswIndex,
+    hnsw_stale: bool,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -28,10 +33,15 @@ pub const Collection = struct {
             .dimension = dimension,
             .metric = metric,
             .points = .empty,
+            .hnsw_index = null,
+            .hnsw_stale = false,
         };
     }
 
     pub fn deinit(self: *Collection) void {
+        if (self.hnsw_index) |*index| {
+            index.deinit();
+        }
         for (self.points.items) |*point| {
             point.deinit(self.allocator);
         }
@@ -52,6 +62,7 @@ pub const Collection = struct {
         var point = try Point.init(self.allocator, id, input_vector, metadata);
         errdefer point.deinit(self.allocator);
         try self.points.append(self.allocator, point);
+        self.markHnswStale();
     }
 
     pub fn delete(self: *Collection, id: []const u8) !void {
@@ -59,6 +70,7 @@ pub const Collection = struct {
 
         var removed = self.points.swapRemove(idx);
         removed.deinit(self.allocator);
+        self.markHnswStale();
     }
 
     pub fn count(self: *const Collection) usize {
@@ -68,6 +80,36 @@ pub const Collection = struct {
     pub fn search(self: *const Collection, query_vector: []const f32, top_k: usize) ![]SearchResult {
         try vector.ensureDimension(query_vector, self.dimension);
         return FlatIndex.search(self.allocator, self.points.items, query_vector, top_k, self.metric);
+    }
+
+    pub fn searchWithOptions(
+        self: *const Collection,
+        query_vector: []const f32,
+        top_k: usize,
+        options: SearchOptions,
+    ) ![]SearchResult {
+        return switch (options.index) {
+            .flat => self.search(query_vector, top_k),
+            .hnsw => blk: {
+                if (self.hnsw_stale) return MnemeError.IndexStale;
+                if (self.hnsw_index) |*index| {
+                    break :blk index.search(self.points.items, query_vector, top_k, options.ef_search);
+                }
+                return MnemeError.IndexNotBuilt;
+            },
+        };
+    }
+
+    pub fn buildHnsw(self: *Collection, config: HnswConfig) !void {
+        if (self.hnsw_index) |*index| {
+            index.deinit();
+            self.hnsw_index = null;
+        }
+        var index = try HnswIndex.init(self.allocator, self.dimension, self.metric, config);
+        errdefer index.deinit();
+        try index.build(self.points.items);
+        self.hnsw_index = index;
+        self.hnsw_stale = false;
     }
 
     pub fn freeSearchResults(self: *const Collection, results: []SearchResult) void {
@@ -104,6 +146,8 @@ pub const Collection = struct {
             .dimension = loaded.dimension,
             .metric = loaded.metric,
             .points = loaded.points,
+            .hnsw_index = null,
+            .hnsw_stale = false,
         };
         loaded.name = &.{};
         loaded.points = .empty;
@@ -115,5 +159,11 @@ pub const Collection = struct {
             if (std.mem.eql(u8, point.id, id)) return idx;
         }
         return null;
+    }
+
+    fn markHnswStale(self: *Collection) void {
+        if (self.hnsw_index != null) {
+            self.hnsw_stale = true;
+        }
     }
 };
