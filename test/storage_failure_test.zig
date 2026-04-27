@@ -3,20 +3,24 @@ const mneme = @import("mneme");
 const helpers = @import("storage_test_helpers.zig");
 
 fn saveCollectionNoLeak(allocator: std.mem.Allocator) !void {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
     var collection = try mneme.Collection.init(allocator, "oom_save", 3, .cosine);
     defer collection.deinit();
     const v = [_]f32{ 1.0, 0.0, 0.0 };
     try collection.insert("p1", &v, "m=1");
 
     var buf: [256]u8 = undefined;
-    const path = try helpers.testPath(&buf, "storage_oom_save.mneme");
+    const path = try helpers.testPath(&tmp, &buf, "storage_oom_save.mneme");
     defer helpers.deleteFile(path);
     try collection.saveToFile(path);
 }
 
 fn loadCollectionNoLeak(allocator: std.mem.Allocator) !void {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
     var path_buf: [256]u8 = undefined;
-    const path = try helpers.testPath(&path_buf, "storage_oom_load.mneme");
+    const path = try helpers.testPath(&tmp, &path_buf, "storage_oom_load.mneme");
     defer helpers.deleteFile(path);
 
     var bytes = std.ArrayList(u8).empty;
@@ -49,8 +53,10 @@ test "load collection handles allocation failures without leaks" {
 }
 
 test "load wrong magic fails" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
     var buf: [256]u8 = undefined;
-    const path = try helpers.testPath(&buf, "storage_wrong_magic.mneme");
+    const path = try helpers.testPath(&tmp, &buf, "storage_wrong_magic.mneme");
     defer helpers.deleteFile(path);
 
     try helpers.writeBytes(path, "WRONG");
@@ -62,8 +68,10 @@ test "load wrong magic fails" {
 }
 
 test "load truncated file fails" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
     var buf: [256]u8 = undefined;
-    const path = try helpers.testPath(&buf, "storage_truncated.mneme");
+    const path = try helpers.testPath(&tmp, &buf, "storage_truncated.mneme");
     defer helpers.deleteFile(path);
 
     try helpers.writeBytes(path, "MNEME");
@@ -78,6 +86,8 @@ test "load with trailing bytes fails" {
     var ctx: helpers.TestCtx = .{};
     defer ctx.deinit();
     const allocator = ctx.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
     var collection = try mneme.Collection.init(allocator, "docs", 3, .cosine);
     defer collection.deinit();
@@ -85,7 +95,7 @@ test "load with trailing bytes fails" {
     try collection.insert("doc_1", &v, null);
 
     var buf: [256]u8 = undefined;
-    const path = try helpers.testPath(&buf, "storage_trailing.mneme");
+    const path = try helpers.testPath(&tmp, &buf, "storage_trailing.mneme");
     defer helpers.deleteFile(path);
     try collection.saveToFile(path);
 
@@ -111,13 +121,15 @@ test "load with checksum mismatch fails" {
     var ctx: helpers.TestCtx = .{};
     defer ctx.deinit();
     const allocator = ctx.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
     var collection = try mneme.Collection.init(allocator, "docs", 3, .cosine);
     defer collection.deinit();
     try collection.insert("doc_1", &[_]f32{ 1.0, 0.0, 0.0 }, null);
 
     var buf: [256]u8 = undefined;
-    const path = try helpers.testPath(&buf, "storage_bad_checksum.mneme");
+    const path = try helpers.testPath(&tmp, &buf, "storage_bad_checksum.mneme");
     defer helpers.deleteFile(path);
     try collection.saveToFile(path);
 
@@ -143,13 +155,15 @@ test "truncated checksum footer fails" {
     var ctx: helpers.TestCtx = .{};
     defer ctx.deinit();
     const allocator = ctx.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
     var collection = try mneme.Collection.init(allocator, "docs", 3, .cosine);
     defer collection.deinit();
     try collection.insert("doc_1", &[_]f32{ 1.0, 0.0, 0.0 }, null);
 
     var buf: [256]u8 = undefined;
-    const path = try helpers.testPath(&buf, "storage_truncated_checksum.mneme");
+    const path = try helpers.testPath(&tmp, &buf, "storage_truncated_checksum.mneme");
     defer helpers.deleteFile(path);
     try collection.saveToFile(path);
 
@@ -172,8 +186,12 @@ test "truncated checksum footer fails" {
 }
 
 test "non-existent path fails cleanly" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [256]u8 = undefined;
+    const path = try helpers.testPath(&tmp, &buf, "does-not-exist.mneme");
     try std.testing.expectError(
         error.FileNotFound,
-        mneme.storage.loadCollection(".zig-cache/does-not-exist.mneme", std.testing.allocator),
+        mneme.storage.loadCollection(path, std.testing.allocator),
     );
 }

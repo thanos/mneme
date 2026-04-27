@@ -6,12 +6,14 @@ test "save and load empty collection" {
     var ctx: helpers.TestCtx = .{};
     defer ctx.deinit();
     const allocator = ctx.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
     var collection = try mneme.Collection.init(allocator, "docs", 3, .cosine);
     defer collection.deinit();
 
     var buf: [256]u8 = undefined;
-    const path = try helpers.testPath(&buf, "storage_empty.mneme");
+    const path = try helpers.testPath(&tmp, &buf, "storage_empty.mneme");
     defer helpers.deleteFile(path);
 
     var loaded = try helpers.saveLoadCollection(allocator, &collection, path);
@@ -30,6 +32,8 @@ test "save and load one point metadata and search" {
     var ctx: helpers.TestCtx = .{};
     defer ctx.deinit();
     const allocator = ctx.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
     var collection = try mneme.Collection.init(allocator, "docs", 3, .cosine);
     defer collection.deinit();
@@ -38,7 +42,7 @@ test "save and load one point metadata and search" {
     try collection.insert("doc_1", &v, "source=chat");
 
     var buf: [256]u8 = undefined;
-    const path = try helpers.testPath(&buf, "storage_one.mneme");
+    const path = try helpers.testPath(&tmp, &buf, "storage_one.mneme");
     defer helpers.deleteFile(path);
 
     var loaded = try helpers.saveLoadCollection(allocator, &collection, path);
@@ -63,6 +67,8 @@ test "metadata round trip via storage load" {
     var ctx: helpers.TestCtx = .{};
     defer ctx.deinit();
     const allocator = ctx.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
     var collection = try mneme.Collection.init(allocator, "docs", 3, .cosine);
     defer collection.deinit();
@@ -71,7 +77,7 @@ test "metadata round trip via storage load" {
     try collection.insert("doc_1", &v, "source=chat");
 
     var buf: [256]u8 = undefined;
-    const path = try helpers.testPath(&buf, "storage_metadata.mneme");
+    const path = try helpers.testPath(&tmp, &buf, "storage_metadata.mneme");
     defer helpers.deleteFile(path);
 
     try collection.saveToFile(path);
@@ -87,6 +93,8 @@ test "save and load many points" {
     var ctx: helpers.TestCtx = .{};
     defer ctx.deinit();
     const allocator = ctx.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
     var collection = try mneme.Collection.init(allocator, "docs", 3, .cosine);
     defer collection.deinit();
@@ -99,7 +107,7 @@ test "save and load many points" {
     try collection.insert("c", &c, null);
 
     var buf: [256]u8 = undefined;
-    const path = try helpers.testPath(&buf, "storage_many.mneme");
+    const path = try helpers.testPath(&tmp, &buf, "storage_many.mneme");
     defer helpers.deleteFile(path);
 
     var loaded = try helpers.saveLoadCollection(allocator, &collection, path);
@@ -119,6 +127,8 @@ test "delete then save and load preserves state" {
     var ctx: helpers.TestCtx = .{};
     defer ctx.deinit();
     const allocator = ctx.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
     var collection = try mneme.Collection.init(allocator, "docs", 3, .cosine);
     defer collection.deinit();
@@ -130,7 +140,7 @@ test "delete then save and load preserves state" {
     try collection.delete("a");
 
     var buf: [256]u8 = undefined;
-    const path = try helpers.testPath(&buf, "storage_delete.mneme");
+    const path = try helpers.testPath(&tmp, &buf, "storage_delete.mneme");
     defer helpers.deleteFile(path);
 
     var loaded = try helpers.saveLoadCollection(allocator, &collection, path);
@@ -147,6 +157,8 @@ test "save-load search equivalence" {
     var ctx: helpers.TestCtx = .{};
     defer ctx.deinit();
     const allocator = ctx.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
     var collection = try mneme.Collection.init(allocator, "docs", 4, .cosine);
     defer collection.deinit();
@@ -159,7 +171,7 @@ test "save-load search equivalence" {
     defer collection.freeSearchResults(before);
 
     var buf: [256]u8 = undefined;
-    const path = try helpers.testPath(&buf, "storage_equiv.mneme");
+    const path = try helpers.testPath(&tmp, &buf, "storage_equiv.mneme");
     defer helpers.deleteFile(path);
     var loaded = try helpers.saveLoadCollection(allocator, &collection, path);
     defer loaded.deinit();
@@ -177,6 +189,8 @@ test "randomized persistence round-trip preserves search and payloads" {
     var ctx: helpers.TestCtx = .{};
     defer ctx.deinit();
     const allocator = ctx.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
     var prng = std.Random.DefaultPrng.init(0x1234_5678_9ABC_DEF0);
     const random = prng.random();
@@ -229,7 +243,7 @@ test "randomized persistence round-trip preserves search and payloads" {
         defer collection.freeSearchResults(expected);
 
         var path_buf: [256]u8 = undefined;
-        const path = try helpers.testPath(&path_buf, "storage_fuzz_case.mneme");
+        const path = try helpers.testPath(&tmp, &path_buf, "storage_fuzz_case.mneme");
         defer helpers.deleteFile(path);
         var loaded = try helpers.saveLoadCollection(allocator, &collection, path);
         defer loaded.deinit();

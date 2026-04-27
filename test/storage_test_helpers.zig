@@ -13,8 +13,8 @@ pub const TestCtx = struct {
     }
 };
 
-pub fn testPath(buf: *[256]u8, name: []const u8) ![]const u8 {
-    return std.fmt.bufPrint(buf, ".zig-cache/{s}", .{name});
+pub fn testPath(tmp: *std.testing.TmpDir, buf: *[256]u8, name: []const u8) ![]const u8 {
+    return std.fmt.bufPrint(buf, ".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, name });
 }
 
 pub fn writeBytes(path: []const u8, bytes: []const u8) !void {
