@@ -2,7 +2,6 @@ const std = @import("std");
 const Point = @import("point.zig").Point;
 const SearchResult = @import("index.zig").SearchResult;
 const Metric = @import("index.zig").Metric;
-const cosineSimilarity = @import("distance.zig").cosineSimilarity;
 const MnemeError = @import("errors.zig").MnemeError;
 const vector = @import("vector.zig");
 
@@ -40,6 +39,12 @@ pub const HnswIndex = struct {
     entry_point: ?usize,
     max_level: isize,
     prng: std.Random.DefaultPrng,
+    point_norms: std.ArrayList(f32),
+    visit_marks: std.ArrayList(u32),
+    visit_epoch: u32,
+    scratch_candidates: std.ArrayList(ScoredNode),
+    scratch_results: std.ArrayList(ScoredNode),
+    scratch_touched: std.ArrayList(usize),
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -61,6 +66,12 @@ pub const HnswIndex = struct {
             .entry_point = null,
             .max_level = -1,
             .prng = std.Random.DefaultPrng.init(config.seed),
+            .point_norms = .empty,
+            .visit_marks = .empty,
+            .visit_epoch = 1,
+            .scratch_candidates = .empty,
+            .scratch_results = .empty,
+            .scratch_touched = .empty,
         };
     }
 
@@ -69,12 +80,19 @@ pub const HnswIndex = struct {
             node.deinit(self.allocator);
         }
         self.nodes.deinit(self.allocator);
+        self.point_norms.deinit(self.allocator);
+        self.visit_marks.deinit(self.allocator);
+        self.scratch_candidates.deinit(self.allocator);
+        self.scratch_results.deinit(self.allocator);
+        self.scratch_touched.deinit(self.allocator);
         self.entry_point = null;
         self.max_level = -1;
     }
 
     pub fn build(self: *HnswIndex, points: []const Point) !void {
         self.clearGraph();
+        try self.precomputePointNorms(points);
+        try self.ensureVisitMarksLen(points.len);
         for (points, 0..) |point, point_index| {
             try vector.ensureDimension(point.vector, self.dimension);
             try self.insert(points, point_index, point.vector);
@@ -83,6 +101,7 @@ pub const HnswIndex = struct {
 
     pub fn insert(self: *HnswIndex, points: []const Point, point_index: usize, point_vector: []const f32) !void {
         try vector.ensureDimension(point_vector, self.dimension);
+        const query_norm = try vector.norm(point_vector);
         const level = self.randomLevel();
         const node_index = try self.addNode(point_index, level);
 
@@ -95,29 +114,43 @@ pub const HnswIndex = struct {
         var current = self.entry_point.?;
         var layer: isize = self.max_level;
         while (layer > @as(isize, @intCast(level))) : (layer -= 1) {
-            current = try self.greedySearchAtLayer(points, point_vector, current, @as(usize, @intCast(layer)));
+            current = try self.greedySearchAtLayer(
+                points,
+                point_vector,
+                query_norm,
+                current,
+                @as(usize, @intCast(layer)),
+            );
         }
 
         const connect_max_layer = @min(@as(usize, @intCast(self.max_level)), level);
         var l: isize = @as(isize, @intCast(connect_max_layer));
         while (l >= 0) : (l -= 1) {
             const layer_usize: usize = @intCast(l);
-            var candidates = try self.searchLayer(
+            const epoch = self.nextVisitEpoch();
+            try self.searchLayerInPlace(
                 points,
                 point_vector,
+                query_norm,
                 current,
                 self.config.ef_construction,
                 layer_usize,
+                epoch,
             );
-            defer candidates.deinit(self.allocator);
-
-            std.mem.sort(ScoredNode, candidates.items, {}, lessThanByScoreDesc);
-            const neighbor_count = @min(self.config.m, candidates.items.len);
-            for (candidates.items[0..neighbor_count]) |candidate| {
-                try self.connectBidirectional(points, node_index, candidate.node_index, layer_usize);
+            std.mem.sort(ScoredNode, self.scratch_results.items, {}, lessThanByScoreDesc);
+            const neighbor_count = @min(self.config.m, self.scratch_results.items.len);
+            self.scratch_touched.clearRetainingCapacity();
+            for (self.scratch_results.items[0..neighbor_count]) |candidate| {
+                try self.addUniqueNeighbor(node_index, layer_usize, candidate.node_index);
+                try self.addUniqueNeighbor(candidate.node_index, layer_usize, node_index);
+                try self.scratch_touched.append(self.allocator, candidate.node_index);
             }
-            if (candidates.items.len > 0) {
-                current = candidates.items[0].node_index;
+            try self.pruneLayer(points, node_index, layer_usize);
+            for (self.scratch_touched.items) |touched_node| {
+                try self.pruneLayer(points, touched_node, layer_usize);
+            }
+            if (self.scratch_results.items.len > 0) {
+                current = self.scratch_results.items[0].node_index;
             }
         }
 
@@ -143,14 +176,15 @@ pub const HnswIndex = struct {
             if (value == 0) return MnemeError.InvalidEfSearch;
             break :blk @max(value, top_k);
         } else @max(self.config.ef_search, top_k);
+        const query_norm = try vector.norm(query);
 
         var current = self.entry_point.?;
         var layer = self.max_level;
         while (layer > 0) : (layer -= 1) {
-            current = try self.greedySearchAtLayer(points, query, current, @as(usize, @intCast(layer)));
+            current = try self.greedySearchAtLayer(points, query, query_norm, current, @as(usize, @intCast(layer)));
         }
 
-        var candidates = try self.searchLayer(points, query, current, ef, 0);
+        var candidates = try self.searchLayer(points, query, query_norm, current, ef, 0);
         defer candidates.deinit(self.allocator);
         std.mem.sort(ScoredNode, candidates.items, {}, lessThanByScoreDesc);
 
@@ -182,9 +216,42 @@ pub const HnswIndex = struct {
             node.deinit(self.allocator);
         }
         self.nodes.clearRetainingCapacity();
+        self.point_norms.clearRetainingCapacity();
+        self.visit_marks.clearRetainingCapacity();
+        self.scratch_candidates.clearRetainingCapacity();
+        self.scratch_results.clearRetainingCapacity();
+        self.scratch_touched.clearRetainingCapacity();
         self.entry_point = null;
         self.max_level = -1;
         self.prng = std.Random.DefaultPrng.init(self.config.seed);
+        self.visit_epoch = 1;
+    }
+
+    fn precomputePointNorms(self: *HnswIndex, points: []const Point) !void {
+        self.point_norms.clearRetainingCapacity();
+        try self.point_norms.ensureTotalCapacity(self.allocator, points.len);
+        for (points) |point| {
+            const norm = try vector.norm(point.vector);
+            try self.point_norms.append(self.allocator, norm);
+        }
+    }
+
+    fn ensureVisitMarksLen(self: *HnswIndex, len: usize) !void {
+        self.visit_marks.clearRetainingCapacity();
+        try self.visit_marks.ensureTotalCapacity(self.allocator, len);
+        if (len > 0) {
+            try self.visit_marks.appendNTimes(self.allocator, 0, len);
+        }
+    }
+
+    fn nextVisitEpoch(self: *HnswIndex) u32 {
+        if (self.visit_epoch == std.math.maxInt(u32)) {
+            @memset(self.visit_marks.items, 0);
+            self.visit_epoch = 1;
+            return self.visit_epoch;
+        }
+        self.visit_epoch += 1;
+        return self.visit_epoch;
     }
 
     fn randomLevel(self: *HnswIndex) usize {
@@ -225,16 +292,17 @@ pub const HnswIndex = struct {
         self: *const HnswIndex,
         points: []const Point,
         query: []const f32,
+        query_norm: f32,
         start_node: usize,
         layer: usize,
     ) !usize {
         var current = start_node;
-        var current_score = try self.similarity(points, current, query);
+        var current_score = try self.similarity(points, current, query, query_norm);
         var improved = true;
         while (improved) {
             improved = false;
             for (self.nodes.items[current].neighbors_by_layer[layer].items) |neighbor| {
-                const neighbor_score = try self.similarity(points, neighbor, query);
+                const neighbor_score = try self.similarity(points, neighbor, query, query_norm);
                 if (neighbor_score > current_score) {
                     current = neighbor;
                     current_score = neighbor_score;
@@ -249,6 +317,7 @@ pub const HnswIndex = struct {
         self: *const HnswIndex,
         points: []const Point,
         query: []const f32,
+        query_norm: f32,
         entry_node: usize,
         ef: usize,
         layer: usize,
@@ -262,7 +331,7 @@ pub const HnswIndex = struct {
         var results: std.ArrayList(ScoredNode) = .empty;
         errdefer results.deinit(self.allocator);
 
-        const entry_score = try self.similarity(points, entry_node, query);
+        const entry_score = try self.similarity(points, entry_node, query, query_norm);
         try candidates.append(self.allocator, .{ .node_index = entry_node, .score = entry_score });
         try results.append(self.allocator, .{ .node_index = entry_node, .score = entry_score });
         visited[entry_node] = true;
@@ -278,7 +347,7 @@ pub const HnswIndex = struct {
                 if (visited[neighbor]) continue;
                 visited[neighbor] = true;
 
-                const score = try self.similarity(points, neighbor, query);
+                const score = try self.similarity(points, neighbor, query, query_norm);
                 if (results.items.len < ef or score > results.items[worstResultIndex(results.items)].score) {
                     try candidates.append(self.allocator, .{ .node_index = neighbor, .score = score });
                     try results.append(self.allocator, .{ .node_index = neighbor, .score = score });
@@ -292,17 +361,53 @@ pub const HnswIndex = struct {
         return results;
     }
 
-    fn connectBidirectional(
+    fn searchLayerInPlace(
         self: *HnswIndex,
         points: []const Point,
-        a: usize,
-        b: usize,
+        query: []const f32,
+        query_norm: f32,
+        entry_node: usize,
+        ef: usize,
         layer: usize,
+        epoch: u32,
     ) !void {
-        try self.addUniqueNeighbor(a, layer, b);
-        try self.addUniqueNeighbor(b, layer, a);
-        try self.pruneLayer(points, a, layer);
-        try self.pruneLayer(points, b, layer);
+        self.scratch_candidates.clearRetainingCapacity();
+        self.scratch_results.clearRetainingCapacity();
+
+        const entry_score = try self.similarity(points, entry_node, query, query_norm);
+        try self.scratch_candidates.append(self.allocator, .{ .node_index = entry_node, .score = entry_score });
+        try self.scratch_results.append(self.allocator, .{ .node_index = entry_node, .score = entry_score });
+        self.visit_marks.items[entry_node] = epoch;
+        var worst_idx: usize = 0;
+        var worst_score: f32 = entry_score;
+
+        while (self.scratch_candidates.items.len > 0) {
+            const best_idx = bestCandidateIndex(self.scratch_candidates.items);
+            const candidate = self.scratch_candidates.swapRemove(best_idx);
+            if (self.scratch_results.items.len >= ef and candidate.score < worst_score) break;
+
+            for (self.nodes.items[candidate.node_index].neighbors_by_layer[layer].items) |neighbor| {
+                if (self.visit_marks.items[neighbor] == epoch) continue;
+                self.visit_marks.items[neighbor] = epoch;
+
+                const score = try self.similarity(points, neighbor, query, query_norm);
+                if (self.scratch_results.items.len < ef or score > worst_score) {
+                    try self.scratch_candidates.append(self.allocator, .{ .node_index = neighbor, .score = score });
+                    try self.scratch_results.append(self.allocator, .{ .node_index = neighbor, .score = score });
+                    const appended_idx = self.scratch_results.items.len - 1;
+                    if (score < worst_score) {
+                        worst_idx = appended_idx;
+                        worst_score = score;
+                    }
+                    if (self.scratch_results.items.len > ef) {
+                        _ = self.scratch_results.swapRemove(worst_idx);
+                        const worst = recomputeWorst(self.scratch_results.items);
+                        worst_idx = worst.idx;
+                        worst_score = worst.score;
+                    }
+                }
+            }
+        }
     }
 
     fn addUniqueNeighbor(self: *HnswIndex, node_index: usize, layer: usize, neighbor: usize) !void {
@@ -318,10 +423,14 @@ pub const HnswIndex = struct {
         if (list.items.len <= self.config.m) return;
 
         const query_vector = points[self.nodes.items[node_index].point_index].vector;
+        const query_norm = if (self.nodes.items[node_index].point_index < self.point_norms.items.len)
+            self.point_norms.items[self.nodes.items[node_index].point_index]
+        else
+            try vector.norm(query_vector);
         var scored: std.ArrayList(ScoredNode) = .empty;
         defer scored.deinit(self.allocator);
         for (list.items) |neighbor| {
-            const score = try self.similarity(points, neighbor, query_vector);
+            const score = try self.similarity(points, neighbor, query_vector, query_norm);
             try scored.append(self.allocator, .{ .node_index = neighbor, .score = score });
         }
         std.mem.sort(ScoredNode, scored.items, {}, lessThanByScoreDesc);
@@ -332,11 +441,39 @@ pub const HnswIndex = struct {
         }
     }
 
-    fn similarity(self: *const HnswIndex, points: []const Point, node_index: usize, query: []const f32) !f32 {
+    fn similarity(
+        self: *const HnswIndex,
+        points: []const Point,
+        node_index: usize,
+        query: []const f32,
+        query_norm: f32,
+    ) !f32 {
         const point = points[self.nodes.items[node_index].point_index];
         return switch (self.metric) {
-            .cosine => cosineSimilarity(point.vector, query),
+            .cosine => self.cosineSimilarityCached(
+                self.nodes.items[node_index].point_index,
+                point.vector,
+                query,
+                query_norm,
+            ),
         };
+    }
+
+    fn cosineSimilarityCached(
+        self: *const HnswIndex,
+        point_index: usize,
+        point_vector: []const f32,
+        query: []const f32,
+        query_norm: f32,
+    ) !f32 {
+        const dot_product = try vector.dot(point_vector, query);
+        const norm_a = if (point_index < self.point_norms.items.len)
+            self.point_norms.items[point_index]
+        else
+            try vector.norm(point_vector);
+        const norm_b = query_norm;
+        if (norm_a == 0.0 or norm_b == 0.0) return MnemeError.ZeroVector;
+        return dot_product / (norm_a * norm_b);
     }
 };
 
@@ -366,4 +503,14 @@ fn worstResultIndex(results: []const ScoredNode) usize {
         if (results[i].score < results[worst_idx].score) worst_idx = i;
     }
     return worst_idx;
+}
+
+const WorstResult = struct {
+    idx: usize,
+    score: f32,
+};
+
+fn recomputeWorst(results: []const ScoredNode) WorstResult {
+    const idx = worstResultIndex(results);
+    return .{ .idx = idx, .score = results[idx].score };
 }
