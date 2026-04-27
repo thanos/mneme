@@ -2,7 +2,7 @@
 
 `mneme` is an embedded-first vector / memory database core written in Zig.
 
-The project currently implements **Phase 1**: a minimal, correctness-first in-memory engine.
+The project currently implements **Phase 1 + Phase 2**: an in-memory engine with canonical persistence.
 
 ## Phase 1 Supports
 
@@ -12,9 +12,13 @@ The project currently implements **Phase 1**: a minimal, correctness-first in-me
 - count vectors
 - search nearest vectors with flat scan and cosine similarity
 
+## Phase 2 Adds
+
+- save collection canonical data to a versioned binary file (`.mneme`)
+- load collection from file and rebuild in-memory search state
+
 ## Not Supported Yet
 
-- persistence
 - approximate indexes (HNSW/IVF)
 - metadata filtering
 - network server mode
@@ -49,6 +53,12 @@ Runs:
 - insert 10,000 vectors
 - dimension 384
 - search top 10
+- save collection
+- load collection
+- search after load
+
+The benchmark includes a soft regression warning if any stage exceeds 60 seconds.
+The benchmark save path uses `saveToFileWithOptions(..., .{ .fsync_on_save = false })` to measure non-durable write throughput.
 
 ## Minimal Example
 
@@ -70,12 +80,39 @@ pub fn main() !void {
     const query = [_]f32{ 1.0, 0.0, 0.0 };
     const results = try collection.search(&query, 10);
     defer collection.freeSearchResults(results);
+
+    try collection.saveToFile(".zig-cache/docs.mneme");
+    var loaded = try mneme.Collection.loadFromFile(allocator, ".zig-cache/docs.mneme");
+    defer loaded.deinit();
 }
 ```
 
 ## Notes
 
 - `prompts/` contains local planning artifacts and is not part of the runtime package API.
+- The `.mneme` format is versioned. Unknown versions fail fast with `UnsupportedVersion`.
+- Phase 2 canonical files persist collection metadata + points only; index state is derived and rebuilt.
+- Current `.mneme` format (`format_version = 2`) rejects trailing bytes as `CorruptRecord` (strict parser).
+- Phase 2 files include a CRC32 footer checksum over the encoded payload.
+- Durable save mode (`fsync_on_save = true`) fsyncs both the data file and its parent directory after atomic rename.
+
+## Format Compatibility Policy
+
+- File format changes must increment `format_version`.
+- New readers should keep support for prior stable format versions whenever practical.
+- Unknown future versions fail safely with `UnsupportedVersion`.
+
+## Persistence Errors
+
+`loadFromFile` / `storage.loadCollection` may return:
+
+- `InvalidMagic`
+- `UnsupportedVersion`
+- `InvalidMetric`
+- `InvalidDimension`
+- `TruncatedFile`
+- `VectorLengthMismatch`
+- `CorruptRecord`
 
 ## Roadmap
 

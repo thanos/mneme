@@ -1,0 +1,306 @@
+const std = @import("std");
+const mneme = @import("mneme");
+
+test "codec round trip header and point record" {
+    var bytes = std.ArrayList(u8).empty;
+    defer bytes.deinit(std.testing.allocator);
+
+    var writer = mneme.codec.MemoryWriter{
+        .allocator = std.testing.allocator,
+        .bytes = &bytes,
+    };
+
+    try mneme.codec.writeHeader(&writer, .{
+        .name = "docs",
+        .dimension = 3,
+        .metric = .cosine,
+        .point_count = 1,
+    });
+    try mneme.codec.writePointRecord(
+        &writer,
+        "doc_1",
+        "source=chat",
+        &[_]f32{ 1.0, 2.0, 3.0 },
+    );
+
+    var reader = mneme.codec.MemoryReader{ .data = bytes.items };
+
+    const header = try mneme.codec.readHeader(&reader, std.testing.allocator);
+    defer std.testing.allocator.free(header.name);
+
+    try std.testing.expect(std.mem.eql(u8, "docs", header.name));
+    try std.testing.expectEqual(@as(usize, 3), header.dimension);
+    try std.testing.expectEqual(mneme.Metric.cosine, header.metric);
+    try std.testing.expectEqual(@as(usize, 1), header.point_count);
+
+    var point = try mneme.codec.readPointRecord(&reader, std.testing.allocator, header.dimension);
+    defer point.deinit(std.testing.allocator);
+
+    try std.testing.expect(std.mem.eql(u8, "doc_1", point.id));
+    try std.testing.expect(point.metadata != null);
+    try std.testing.expect(std.mem.eql(u8, "source=chat", point.metadata.?));
+    try std.testing.expectEqual(@as(usize, 3), point.vector.len);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), point.vector[0], 0.0001);
+}
+
+test "wrong magic fails" {
+    var bytes = std.ArrayList(u8).empty;
+    defer bytes.deinit(std.testing.allocator);
+    try bytes.appendSlice(std.testing.allocator, "WRONG");
+
+    var reader = mneme.codec.MemoryReader{ .data = bytes.items };
+    try std.testing.expectError(
+        mneme.MnemeError.InvalidMagic,
+        mneme.codec.readHeader(&reader, std.testing.allocator),
+    );
+}
+
+test "wrong version fails" {
+    var bytes = std.ArrayList(u8).empty;
+    defer bytes.deinit(std.testing.allocator);
+    var writer = mneme.codec.MemoryWriter{
+        .allocator = std.testing.allocator,
+        .bytes = &bytes,
+    };
+
+    try writer.writeAll("MNEME");
+    try writer.writeInt(u32, 999, .little);
+    try writer.writeInt(u32, 3, .little);
+    try writer.writeByte(1);
+    try writer.writeInt(u32, 4, .little);
+    try writer.writeAll("docs");
+    try writer.writeInt(u64, 0, .little);
+
+    var reader = mneme.codec.MemoryReader{ .data = bytes.items };
+    try std.testing.expectError(
+        mneme.MnemeError.UnsupportedVersion,
+        mneme.codec.readHeader(&reader, std.testing.allocator),
+    );
+}
+
+test "truncated file fails" {
+    var bytes = std.ArrayList(u8).empty;
+    defer bytes.deinit(std.testing.allocator);
+    try bytes.appendSlice(std.testing.allocator, "MN");
+
+    var reader = mneme.codec.MemoryReader{ .data = bytes.items };
+    try std.testing.expectError(
+        mneme.MnemeError.TruncatedFile,
+        mneme.codec.readHeader(&reader, std.testing.allocator),
+    );
+}
+
+test "invalid metric fails" {
+    var bytes = std.ArrayList(u8).empty;
+    defer bytes.deinit(std.testing.allocator);
+    var writer = mneme.codec.MemoryWriter{
+        .allocator = std.testing.allocator,
+        .bytes = &bytes,
+    };
+
+    try writer.writeAll("MNEME");
+    try writer.writeInt(u32, mneme.codec.format_version, .little);
+    try writer.writeInt(u32, 3, .little);
+    try writer.writeByte(255);
+    try writer.writeInt(u32, 4, .little);
+    try writer.writeAll("docs");
+    try writer.writeInt(u64, 0, .little);
+
+    var reader = mneme.codec.MemoryReader{ .data = bytes.items };
+    try std.testing.expectError(
+        mneme.MnemeError.InvalidMetric,
+        mneme.codec.readHeader(&reader, std.testing.allocator),
+    );
+}
+
+test "zero dimension in header fails" {
+    var bytes = std.ArrayList(u8).empty;
+    defer bytes.deinit(std.testing.allocator);
+    var writer = mneme.codec.MemoryWriter{
+        .allocator = std.testing.allocator,
+        .bytes = &bytes,
+    };
+
+    try writer.writeAll("MNEME");
+    try writer.writeInt(u32, mneme.codec.format_version, .little);
+    try writer.writeInt(u32, 0, .little);
+    try writer.writeByte(1);
+    try writer.writeInt(u32, 4, .little);
+    try writer.writeAll("docs");
+    try writer.writeInt(u64, 0, .little);
+
+    var reader = mneme.codec.MemoryReader{ .data = bytes.items };
+    try std.testing.expectError(
+        mneme.MnemeError.InvalidDimension,
+        mneme.codec.readHeader(&reader, std.testing.allocator),
+    );
+}
+
+test "wrong vector length fails" {
+    var bytes = std.ArrayList(u8).empty;
+    defer bytes.deinit(std.testing.allocator);
+    var writer = mneme.codec.MemoryWriter{
+        .allocator = std.testing.allocator,
+        .bytes = &bytes,
+    };
+
+    try mneme.codec.writeHeader(&writer, .{
+        .name = "docs",
+        .dimension = 3,
+        .metric = .cosine,
+        .point_count = 1,
+    });
+    try mneme.codec.writePointRecord(
+        &writer,
+        "doc_1",
+        null,
+        &[_]f32{ 1.0, 2.0 },
+    );
+
+    var reader = mneme.codec.MemoryReader{ .data = bytes.items };
+    const header = try mneme.codec.readHeader(&reader, std.testing.allocator);
+    defer std.testing.allocator.free(header.name);
+
+    try std.testing.expectError(
+        mneme.MnemeError.VectorLengthMismatch,
+        mneme.codec.readPointRecord(&reader, std.testing.allocator, header.dimension),
+    );
+}
+
+test "special float values round trip" {
+    var bytes = std.ArrayList(u8).empty;
+    defer bytes.deinit(std.testing.allocator);
+    var writer = mneme.codec.MemoryWriter{
+        .allocator = std.testing.allocator,
+        .bytes = &bytes,
+    };
+
+    const input = [_]f32{
+        -0.0,
+        std.math.inf(f32),
+        -std.math.inf(f32),
+        std.math.nan(f32),
+    };
+
+    try mneme.codec.writeHeader(&writer, .{
+        .name = "docs",
+        .dimension = input.len,
+        .metric = .cosine,
+        .point_count = 1,
+    });
+    try mneme.codec.writePointRecord(&writer, "doc_1", null, &input);
+
+    var reader = mneme.codec.MemoryReader{ .data = bytes.items };
+    const header = try mneme.codec.readHeader(&reader, std.testing.allocator);
+    defer std.testing.allocator.free(header.name);
+    var point = try mneme.codec.readPointRecord(&reader, std.testing.allocator, header.dimension);
+    defer point.deinit(std.testing.allocator);
+
+    for (input, point.vector) |left, right| {
+        try std.testing.expectEqual(@as(u32, @bitCast(left)), @as(u32, @bitCast(right)));
+    }
+}
+
+test "oversized header name length is rejected" {
+    var bytes = std.ArrayList(u8).empty;
+    defer bytes.deinit(std.testing.allocator);
+    var writer = mneme.codec.MemoryWriter{
+        .allocator = std.testing.allocator,
+        .bytes = &bytes,
+    };
+
+    try writer.writeAll("MNEME");
+    try writer.writeInt(u32, mneme.codec.format_version, .little);
+    try writer.writeInt(u32, 3, .little);
+    try writer.writeByte(1);
+    try writer.writeInt(u32, mneme.codec.max_name_len + 1, .little);
+    try writer.writeInt(u64, 0, .little);
+
+    var reader = mneme.codec.MemoryReader{ .data = bytes.items };
+    try std.testing.expectError(
+        mneme.MnemeError.CorruptRecord,
+        mneme.codec.readHeader(&reader, std.testing.allocator),
+    );
+}
+
+test "oversized id length is rejected before allocation" {
+    var bytes = std.ArrayList(u8).empty;
+    defer bytes.deinit(std.testing.allocator);
+    var writer = mneme.codec.MemoryWriter{
+        .allocator = std.testing.allocator,
+        .bytes = &bytes,
+    };
+
+    try writer.writeInt(u32, mneme.codec.max_id_len + 1, .little);
+
+    var reader = mneme.codec.MemoryReader{ .data = bytes.items };
+    try std.testing.expectError(
+        mneme.MnemeError.CorruptRecord,
+        mneme.codec.readPointRecord(&reader, std.testing.allocator, 3),
+    );
+}
+
+test "oversized metadata length is rejected before allocation" {
+    var bytes = std.ArrayList(u8).empty;
+    defer bytes.deinit(std.testing.allocator);
+    var writer = mneme.codec.MemoryWriter{
+        .allocator = std.testing.allocator,
+        .bytes = &bytes,
+    };
+
+    try writer.writeInt(u32, 1, .little);
+    try writer.writeAll("a");
+    try writer.writeInt(u32, mneme.codec.max_metadata_len + 1, .little);
+
+    var reader = mneme.codec.MemoryReader{ .data = bytes.items };
+    try std.testing.expectError(
+        mneme.MnemeError.CorruptRecord,
+        mneme.codec.readPointRecord(&reader, std.testing.allocator, 3),
+    );
+}
+
+test "oversized dimension in header is rejected" {
+    var bytes = std.ArrayList(u8).empty;
+    defer bytes.deinit(std.testing.allocator);
+    var writer = mneme.codec.MemoryWriter{
+        .allocator = std.testing.allocator,
+        .bytes = &bytes,
+    };
+
+    try writer.writeAll("MNEME");
+    try writer.writeInt(u32, mneme.codec.format_version, .little);
+    try writer.writeInt(u32, mneme.codec.max_dimension + 1, .little);
+    try writer.writeByte(1);
+    try writer.writeInt(u32, 4, .little);
+    try writer.writeAll("docs");
+    try writer.writeInt(u64, 0, .little);
+
+    var reader = mneme.codec.MemoryReader{ .data = bytes.items };
+    try std.testing.expectError(
+        mneme.MnemeError.CorruptRecord,
+        mneme.codec.readHeader(&reader, std.testing.allocator),
+    );
+}
+
+test "oversized point count in header is rejected" {
+    var bytes = std.ArrayList(u8).empty;
+    defer bytes.deinit(std.testing.allocator);
+    var writer = mneme.codec.MemoryWriter{
+        .allocator = std.testing.allocator,
+        .bytes = &bytes,
+    };
+
+    try writer.writeAll("MNEME");
+    try writer.writeInt(u32, mneme.codec.format_version, .little);
+    try writer.writeInt(u32, 3, .little);
+    try writer.writeByte(1);
+    try writer.writeInt(u32, 4, .little);
+    try writer.writeAll("docs");
+    try writer.writeInt(u64, mneme.codec.max_point_count + 1, .little);
+
+    var reader = mneme.codec.MemoryReader{ .data = bytes.items };
+    try std.testing.expectError(
+        mneme.MnemeError.CorruptRecord,
+        mneme.codec.readHeader(&reader, std.testing.allocator),
+    );
+}

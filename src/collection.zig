@@ -5,6 +5,7 @@ const SearchResult = @import("index.zig").SearchResult;
 const Metric = @import("index.zig").Metric;
 const MnemeError = @import("errors.zig").MnemeError;
 const vector = @import("vector.zig");
+const storage = @import("storage.zig");
 
 pub const Collection = struct {
     allocator: std.mem.Allocator,
@@ -71,6 +72,42 @@ pub const Collection = struct {
 
     pub fn freeSearchResults(self: *const Collection, results: []SearchResult) void {
         FlatIndex.freeSearchResults(self.allocator, results);
+    }
+
+    pub fn saveToFile(self: *const Collection, path: []const u8) !void {
+        try storage.saveCollection(self.allocator, path, self.name, self.dimension, self.metric, self.points.items);
+    }
+
+    pub fn saveToFileWithOptions(
+        self: *const Collection,
+        path: []const u8,
+        options: storage.SaveOptions,
+    ) !void {
+        try storage.saveCollectionWithOptions(
+            self.allocator,
+            path,
+            self.name,
+            self.dimension,
+            self.metric,
+            self.points.items,
+            options,
+        );
+    }
+
+    pub fn loadFromFile(allocator: std.mem.Allocator, path: []const u8) !Collection {
+        var loaded = try storage.loadCollection(path, allocator);
+        errdefer loaded.deinit();
+
+        const collection = Collection{
+            .allocator = allocator,
+            .name = loaded.name,
+            .dimension = loaded.dimension,
+            .metric = loaded.metric,
+            .points = loaded.points,
+        };
+        loaded.name = &.{};
+        loaded.points = .empty;
+        return collection;
     }
 
     fn findPointIndex(self: *const Collection, id: []const u8) ?usize {

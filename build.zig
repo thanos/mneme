@@ -98,6 +98,27 @@ pub fn build(b: *std.Build) void {
         mneme_module,
         "test/index_test.zig",
     );
+    const run_codec_tests = addMnemeTest(
+        b,
+        target,
+        optimize,
+        mneme_module,
+        "test/codec_test.zig",
+    );
+    const run_storage_roundtrip_tests = addMnemeTest(
+        b,
+        target,
+        optimize,
+        mneme_module,
+        "test/storage_roundtrip_test.zig",
+    );
+    const run_storage_failure_tests = addMnemeTest(
+        b,
+        target,
+        optimize,
+        mneme_module,
+        "test/storage_failure_test.zig",
+    );
 
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_root_tests.step);
@@ -105,4 +126,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_distance_tests.step);
     test_step.dependOn(&run_collection_tests.step);
     test_step.dependOn(&run_index_tests.step);
+    test_step.dependOn(&run_codec_tests.step);
+    test_step.dependOn(&run_storage_roundtrip_tests.step);
+    test_step.dependOn(&run_storage_failure_tests.step);
 }
