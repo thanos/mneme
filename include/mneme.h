@@ -54,9 +54,26 @@ mneme_status_t mneme_collection_insert(
     const char *metadata
 );
 
+mneme_status_t mneme_collection_insert_batch(
+    mneme_collection_t *collection,
+    const char *const *ids,
+    const float *vectors,
+    uint32_t vector_len,
+    const char *const *metadata,
+    uint32_t count,
+    uint32_t *out_inserted
+);
+
 mneme_status_t mneme_collection_delete(
     mneme_collection_t *collection,
     const char *id
+);
+
+mneme_status_t mneme_collection_delete_batch(
+    mneme_collection_t *collection,
+    const char *const *ids,
+    uint32_t count,
+    uint32_t *out_deleted
 );
 
 uint64_t mneme_collection_count(const mneme_collection_t *collection);

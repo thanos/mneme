@@ -210,6 +210,61 @@ pub export fn mneme_collection_insert(
     return MNEME_OK;
 }
 
+pub export fn mneme_collection_insert_batch(
+    collection: ?*mneme_collection_t,
+    ids: ?[*]const ?[*:0]const u8,
+    vectors: ?[*]const f32,
+    vector_len: u32,
+    metadata: ?[*]const ?[*:0]const u8,
+    count: u32,
+    out_inserted: ?*u32,
+) mneme_status_t {
+    if (out_inserted) |ptr| ptr.* = 0;
+    if (collection == null) {
+        setLastError("InvalidArgument");
+        return MNEME_ERROR_INVALID_ARGUMENT;
+    }
+    if (count == 0) {
+        clearLastError();
+        return MNEME_OK;
+    }
+    if (ids == null or vectors == null) {
+        setLastError("InvalidArgument");
+        return MNEME_ERROR_INVALID_ARGUMENT;
+    }
+
+    const dim: usize = @intCast(vector_len);
+    const n: usize = @intCast(count);
+    const total = std.math.mul(usize, n, dim) catch {
+        setLastError("InvalidArgument");
+        return MNEME_ERROR_INVALID_ARGUMENT;
+    };
+    const ids_slice = ids.?[0..n];
+    const vectors_slice = vectors.?[0..total];
+    const metadata_slice: ?[]const ?[*:0]const u8 = if (metadata) |m| m[0..n] else null;
+    var inserted: usize = 0;
+    var coll = &asCollection(collection.?).collection;
+    while (inserted < n) : (inserted += 1) {
+        const id_ptr = ids_slice[inserted] orelse {
+            setLastError("InvalidArgument");
+            return MNEME_ERROR_INVALID_ARGUMENT;
+        };
+        const start = inserted * dim;
+        const vector = vectors_slice[start .. start + dim];
+        const metadata_value: ?[]const u8 = if (metadata_slice) |m| blk: {
+            if (m[inserted]) |v| break :blk std.mem.span(v);
+            break :blk null;
+        } else null;
+        coll.insert(std.mem.span(id_ptr), vector, metadata_value) catch |err| {
+            if (out_inserted) |ptr| ptr.* = @intCast(inserted);
+            return mapError(err);
+        };
+    }
+    if (out_inserted) |ptr| ptr.* = @intCast(inserted);
+    clearLastError();
+    return MNEME_OK;
+}
+
 pub export fn mneme_collection_delete(
     collection: ?*mneme_collection_t,
     id: ?[*:0]const u8,
@@ -221,6 +276,44 @@ pub export fn mneme_collection_delete(
     asCollection(collection.?).collection.delete(std.mem.span(id.?)) catch |err| {
         return mapError(err);
     };
+    clearLastError();
+    return MNEME_OK;
+}
+
+pub export fn mneme_collection_delete_batch(
+    collection: ?*mneme_collection_t,
+    ids: ?[*]const ?[*:0]const u8,
+    count: u32,
+    out_deleted: ?*u32,
+) mneme_status_t {
+    if (out_deleted) |ptr| ptr.* = 0;
+    if (collection == null) {
+        setLastError("InvalidArgument");
+        return MNEME_ERROR_INVALID_ARGUMENT;
+    }
+    if (count == 0) {
+        clearLastError();
+        return MNEME_OK;
+    }
+    if (ids == null) {
+        setLastError("InvalidArgument");
+        return MNEME_ERROR_INVALID_ARGUMENT;
+    }
+    const n: usize = @intCast(count);
+    const ids_slice = ids.?[0..n];
+    var deleted: usize = 0;
+    var coll = &asCollection(collection.?).collection;
+    while (deleted < n) : (deleted += 1) {
+        const id_ptr = ids_slice[deleted] orelse {
+            setLastError("InvalidArgument");
+            return MNEME_ERROR_INVALID_ARGUMENT;
+        };
+        coll.delete(std.mem.span(id_ptr)) catch |err| {
+            if (out_deleted) |ptr| ptr.* = @intCast(deleted);
+            return mapError(err);
+        };
+    }
+    if (out_deleted) |ptr| ptr.* = @intCast(deleted);
     clearLastError();
     return MNEME_OK;
 }

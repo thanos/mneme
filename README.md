@@ -129,6 +129,7 @@ The C ABI exposes:
 
 - collection create/load/free
 - insert/delete/count
+- batch insert/delete
 - flat search and HNSW search
 - HNSW build
 - save/load
