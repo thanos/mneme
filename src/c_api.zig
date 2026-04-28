@@ -257,6 +257,13 @@ pub export fn mneme_collection_insert_batch(
 
     const dim: usize = @intCast(vector_len);
     const n: usize = @intCast(count);
+    const coll_handle = asCollection(collection.?);
+    coll_handle.mutex.lock();
+    defer coll_handle.mutex.unlock();
+    if (dim != coll_handle.collection.dimension) {
+        setLastError("DimensionMismatch");
+        return MNEME_ERROR_DIMENSION_MISMATCH;
+    }
     const total = std.math.mul(usize, n, dim) catch {
         setLastError("InvalidArgument");
         return MNEME_ERROR_INVALID_ARGUMENT;
@@ -265,9 +272,6 @@ pub export fn mneme_collection_insert_batch(
     const vectors_slice = vectors.?[0..total];
     const metadata_slice: ?[]const ?[*:0]const u8 = if (metadata) |m| m[0..n] else null;
     var inserted: usize = 0;
-    const coll_handle = asCollection(collection.?);
-    coll_handle.mutex.lock();
-    defer coll_handle.mutex.unlock();
     var coll = &coll_handle.collection;
     while (inserted < n) : (inserted += 1) {
         const id_ptr = ids_slice[inserted] orelse {

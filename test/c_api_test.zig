@@ -182,6 +182,22 @@ test "insert batch reports partial progress on null id entry" {
     try std.testing.expectEqual(@as(u64, 1), capi.mneme_collection_count(collection));
 }
 
+test "insert batch rejects wrong vector_len before slicing payload" {
+    var collection: ?*capi.mneme_collection_t = null;
+    try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_create("docs", 3, capi.MNEME_METRIC_COSINE, &collection));
+    defer capi.mneme_collection_free(collection);
+
+    const ids = [_]?[*:0]const u8{ "a", "b" };
+    const vectors = [_]f32{ 1.0, 0.0, 0.0 };
+    var inserted: u32 = 0;
+    try std.testing.expectEqual(
+        capi.MNEME_ERROR_DIMENSION_MISMATCH,
+        capi.mneme_collection_insert_batch(collection, &ids, &vectors, 2, null, 2, &inserted),
+    );
+    try std.testing.expectEqual(@as(u32, 0), inserted);
+    try std.testing.expectEqual(@as(u64, 0), capi.mneme_collection_count(collection));
+}
+
 test "insert rejects wrong dimension" {
     var collection: ?*capi.mneme_collection_t = null;
     try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_create("docs", 3, capi.MNEME_METRIC_COSINE, &collection));

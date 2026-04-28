@@ -163,22 +163,20 @@ pub fn build(b: *std.Build) void {
         "test/c_api_test.zig",
     );
 
-    const compile_c_example = b.addSystemCommand(&.{
-        "zig",
-        "cc",
-        "examples/c/basic.c",
-        "-Iinclude",
-        "-Lzig-out/lib",
-        "-lmneme",
-        "-Wl,-rpath,zig-out/lib",
-        "-o",
-        "zig-out/bin/mneme_c_smoke",
-    });
+    const install_lib_dir = b.getInstallPath(.lib, "");
+    const install_header_dir = b.getInstallPath(.header, "");
+    const smoke_bin_path = b.getInstallPath(.bin, "mneme_c_smoke");
+    const compile_c_example = b.addSystemCommand(&.{ b.graph.zig_exe, "cc" });
+    compile_c_example.addArg("examples/c/basic.c");
+    compile_c_example.addArg(b.fmt("-I{s}", .{install_header_dir}));
+    compile_c_example.addArg(b.fmt("-L{s}", .{install_lib_dir}));
+    compile_c_example.addArg("-lmneme");
+    compile_c_example.addArg(b.fmt("-Wl,-rpath,{s}", .{install_lib_dir}));
+    compile_c_example.addArg("-o");
+    compile_c_example.addArg(smoke_bin_path);
     compile_c_example.step.dependOn(b.getInstallStep());
 
-    const run_c_example = b.addSystemCommand(&.{
-        "zig-out/bin/mneme_c_smoke",
-    });
+    const run_c_example = b.addSystemCommand(&.{smoke_bin_path});
     run_c_example.step.dependOn(&compile_c_example.step);
 
     const c_integration_step = b.step("c-integration", "Compile and run C ABI smoke example");
