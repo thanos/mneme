@@ -194,7 +194,7 @@ test "hnsw search before build returns index not built" {
     );
 }
 
-test "hnsw search rejects explicit ef_search zero" {
+test "hnsw search ef_search zero uses default" {
     var collection: ?*capi.mneme_collection_t = null;
     try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_create("docs", 3, capi.MNEME_METRIC_COSINE, &collection));
     defer capi.mneme_collection_free(collection);
@@ -204,9 +204,11 @@ test "hnsw search rejects explicit ef_search zero" {
     try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_build_hnsw(collection, &cfg));
     var results: ?*capi.mneme_results_t = null;
     try std.testing.expectEqual(
-        capi.MNEME_ERROR_INVALID_ARGUMENT,
+        capi.MNEME_OK,
         capi.mneme_collection_search_hnsw(collection, &a, a.len, 1, 0, &results),
     );
+    defer capi.mneme_results_free(results);
+    try std.testing.expectEqual(@as(u32, 1), capi.mneme_results_len(results));
 }
 
 test "hnsw stale maps to index stale" {

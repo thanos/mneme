@@ -386,15 +386,10 @@ pub export fn mneme_collection_search_hnsw(
         setLastError("InvalidArgument");
         return MNEME_ERROR_INVALID_ARGUMENT;
     };
-    if (ef_search == 0) {
-        setLastError("InvalidEfSearch");
-        return MNEME_ERROR_INVALID_ARGUMENT;
-    }
-
     var coll = &asCollection(collection.?).collection;
     const search_options = mneme.SearchOptions{
         .index = .hnsw,
-        .ef_search = @as(usize, ef_search),
+        .ef_search = if (ef_search == 0) null else @as(usize, ef_search),
     };
     const raw = coll.searchWithOptions(query_slice, @intCast(top_k), search_options) catch |err| return mapError(err);
     convertAndTakeResults(coll, raw, out_results.?) catch |err| return mapError(err);

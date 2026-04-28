@@ -96,6 +96,7 @@ mneme_status_t mneme_collection_search_hnsw(
     const float *query,
     uint32_t query_len,
     uint32_t top_k,
+    /* ef_search = 0 uses collection/index default ef_search */
     uint32_t ef_search,
     mneme_results_t **out_results
 );
