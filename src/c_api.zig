@@ -13,6 +13,7 @@ pub const MNEME_ERROR_INTERNAL: mneme_status_t = 255;
 
 pub const mneme_metric_t = u32;
 pub const MNEME_METRIC_COSINE: mneme_metric_t = 1;
+pub const MNEME_EF_SEARCH_DEFAULT: u32 = 0;
 
 pub const mneme_hnsw_config_t = extern struct {
     m: u32,
@@ -33,12 +34,19 @@ const SpinLock = struct {
     state: std.atomic.Value(u8) = .init(0),
 
     fn lock(self: *SpinLock) void {
+        var spins: u32 = 0;
         while (self.state.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) {
-            std.Thread.yield() catch {};
+            spins += 1;
+            if (spins < 64) {
+                std.atomic.spinLoopHint();
+            } else {
+                std.Thread.yield() catch {};
+            }
         }
     }
 
     fn unlock(self: *SpinLock) void {
+        std.debug.assert(self.state.load(.monotonic) == 1);
         self.state.store(0, .release);
     }
 };
@@ -341,12 +349,12 @@ pub export fn mneme_collection_delete_batch(
     return MNEME_OK;
 }
 
-pub export fn mneme_collection_count(collection: ?*const mneme_collection_t) u64 {
+pub export fn mneme_collection_count(collection: ?*mneme_collection_t) u64 {
     if (collection == null) {
         setLastError("InvalidArgument");
         return 0;
     }
-    const coll_handle: *CCollection = @ptrCast(@alignCast(@constCast(collection.?)));
+    const coll_handle = asCollection(collection.?);
     coll_handle.mutex.lock();
     defer coll_handle.mutex.unlock();
     clearLastError();
@@ -424,7 +432,7 @@ pub export fn mneme_collection_search_hnsw(
     var coll = &coll_handle.collection;
     const search_options = mneme.SearchOptions{
         .index = .hnsw,
-        .ef_search = if (ef_search == 0) null else @as(usize, ef_search),
+        .ef_search = if (ef_search == MNEME_EF_SEARCH_DEFAULT) null else @as(usize, ef_search),
     };
     const raw = coll.searchWithOptions(query_slice, @intCast(top_k), search_options) catch |err| return mapError(err);
     convertAndTakeResults(coll, raw, out_results.?) catch |err| return mapError(err);
@@ -474,7 +482,6 @@ pub export fn mneme_results_len(results: ?*const mneme_results_t) u32 {
         setLastError("InvalidArgument");
         return 0;
     }
-    clearLastError();
     return @intCast(asResultsConst(results.?).items.len);
 }
 
@@ -489,7 +496,6 @@ pub export fn mneme_results_id(results: ?*const mneme_results_t, index: u32) ?[*
         setLastError("InvalidArgument");
         return null;
     }
-    clearLastError();
     return resolved.items[idx].id_z.ptr;
 }
 
@@ -504,7 +510,6 @@ pub export fn mneme_results_score(results: ?*const mneme_results_t, index: u32) 
         setLastError("InvalidArgument");
         return 0.0;
     }
-    clearLastError();
     return resolved.items[idx].score;
 }
 

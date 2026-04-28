@@ -15,6 +15,9 @@ int main(void) {
 
     mneme_results_t *flat_results = 0;
     if (mneme_collection_search_flat(collection, v1, 3, 2, &flat_results) != MNEME_OK) return 1;
+    if (mneme_results_len(flat_results) == 0) return 2;
+    const char *first = mneme_results_id(flat_results, 0);
+    if (first == 0 || first[0] != 'a') return 3;
     mneme_results_free(flat_results);
 
     const mneme_hnsw_config_t cfg = {

@@ -10,6 +10,17 @@ const ParallelSearchCtx = struct {
     had_error: *std.atomic.Value(bool),
 };
 
+const ReaderWriterCtx = struct {
+    collection: *capi.mneme_collection_t,
+    had_error: *std.atomic.Value(bool),
+};
+
+const ThreadErrorCapture = struct {
+    mode: u8,
+    buf: [64]u8 = [_]u8{0} ** 64,
+    len: usize = 0,
+};
+
 fn parallelFlatSearchWorker(ctx: *const ParallelSearchCtx) void {
     var i: usize = 0;
     while (i < ctx.iterations) : (i += 1) {
@@ -33,6 +44,54 @@ fn parallelFlatSearchWorker(ctx: *const ParallelSearchCtx) void {
     }
 }
 
+fn readerWorker(ctx: *const ReaderWriterCtx) void {
+    const query = [_]f32{ 1.0, 0.0, 0.0 };
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        var results: ?*capi.mneme_results_t = null;
+        const status = capi.mneme_collection_search_flat(ctx.collection, &query, query.len, 3, &results);
+        if (status != capi.MNEME_OK) {
+            ctx.had_error.store(true, .seq_cst);
+            return;
+        }
+        capi.mneme_results_free(results);
+    }
+}
+
+fn writerWorker(ctx: *const ReaderWriterCtx) void {
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        var id_buf: [32:0]u8 = undefined;
+        const id = std.fmt.bufPrintSentinel(&id_buf, "w_{d}", .{i}, 0) catch {
+            ctx.had_error.store(true, .seq_cst);
+            return;
+        };
+        const v = [_]f32{ 1.0, @as(f32, @floatFromInt(@mod(i, 10))) / 10.0, 0.0 };
+        const status = capi.mneme_collection_insert(ctx.collection, id.ptr, &v, v.len, null);
+        if (status != capi.MNEME_OK) {
+            ctx.had_error.store(true, .seq_cst);
+            return;
+        }
+    }
+}
+
+fn captureThreadError(capture: *ThreadErrorCapture) void {
+    switch (capture.mode) {
+        0 => {
+            var out: ?*capi.mneme_collection_t = null;
+            _ = capi.mneme_collection_create(null, 3, capi.MNEME_METRIC_COSINE, &out);
+        },
+        else => {
+            var out: ?*capi.mneme_collection_t = null;
+            _ = capi.mneme_collection_create("docs", 0, capi.MNEME_METRIC_COSINE, &out);
+        },
+    }
+    const msg = std.mem.span(capi.mneme_last_error());
+    const n = @min(capture.buf.len, msg.len);
+    @memcpy(capture.buf[0..n], msg[0..n]);
+    capture.len = n;
+}
+
 test "abi version returns nonzero" {
     try std.testing.expect(capi.mneme_abi_version() != 0);
 }
@@ -49,6 +108,15 @@ test "create rejects null out pointer" {
         capi.MNEME_ERROR_INVALID_ARGUMENT,
         capi.mneme_collection_create("docs", 3, capi.MNEME_METRIC_COSINE, null),
     );
+}
+
+test "create rejects null name" {
+    var collection: ?*capi.mneme_collection_t = null;
+    try std.testing.expectEqual(
+        capi.MNEME_ERROR_INVALID_ARGUMENT,
+        capi.mneme_collection_create(null, 3, capi.MNEME_METRIC_COSINE, &collection),
+    );
+    try std.testing.expect(collection == null);
 }
 
 test "create rejects invalid dimension" {
@@ -195,6 +263,15 @@ test "results free is safe on null" {
     capi.mneme_results_free(null);
 }
 
+test "collection free is safe on null" {
+    capi.mneme_collection_free(null);
+}
+
+test "collection count null returns zero and sets last error" {
+    try std.testing.expectEqual(@as(u64, 0), capi.mneme_collection_count(null));
+    try std.testing.expect(std.mem.span(capi.mneme_last_error()).len > 0);
+}
+
 test "build hnsw works and hnsw search works" {
     var collection: ?*capi.mneme_collection_t = null;
     try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_create("docs", 3, capi.MNEME_METRIC_COSINE, &collection));
@@ -241,6 +318,52 @@ test "hnsw search ef_search zero uses default" {
     try std.testing.expectEqual(@as(u32, 1), capi.mneme_results_len(results));
 }
 
+test "hnsw search top_k zero returns empty results" {
+    var collection: ?*capi.mneme_collection_t = null;
+    try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_create("docs", 3, capi.MNEME_METRIC_COSINE, &collection));
+    defer capi.mneme_collection_free(collection);
+    const a = [_]f32{ 1.0, 0.0, 0.0 };
+    const cfg = capi.mneme_hnsw_config_t{ .m = 16, .ef_construction = 64, .ef_search = 32, .seed = 11 };
+    try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_insert(collection, "a", &a, a.len, null));
+    try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_build_hnsw(collection, &cfg));
+    var results: ?*capi.mneme_results_t = null;
+    try std.testing.expectEqual(
+        capi.MNEME_OK,
+        capi.mneme_collection_search_hnsw(collection, &a, a.len, 0, capi.MNEME_EF_SEARCH_DEFAULT, &results),
+    );
+    defer capi.mneme_results_free(results);
+    try std.testing.expectEqual(@as(u32, 0), capi.mneme_results_len(results));
+}
+
+test "hnsw ef_search default matches explicit default value" {
+    var collection: ?*capi.mneme_collection_t = null;
+    try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_create("docs", 3, capi.MNEME_METRIC_COSINE, &collection));
+    defer capi.mneme_collection_free(collection);
+    const a = [_]f32{ 1.0, 0.0, 0.0 };
+    const b = [_]f32{ 0.0, 1.0, 0.0 };
+    const cfg = capi.mneme_hnsw_config_t{ .m = 16, .ef_construction = 64, .ef_search = 32, .seed = 42 };
+    try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_insert(collection, "a", &a, a.len, null));
+    try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_insert(collection, "b", &b, b.len, null));
+    try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_build_hnsw(collection, &cfg));
+
+    var def_results: ?*capi.mneme_results_t = null;
+    var explicit_results: ?*capi.mneme_results_t = null;
+    try std.testing.expectEqual(
+        capi.MNEME_OK,
+        capi.mneme_collection_search_hnsw(collection, &a, a.len, 2, capi.MNEME_EF_SEARCH_DEFAULT, &def_results),
+    );
+    defer capi.mneme_results_free(def_results);
+    try std.testing.expectEqual(
+        capi.MNEME_OK,
+        capi.mneme_collection_search_hnsw(collection, &a, a.len, 2, cfg.ef_search, &explicit_results),
+    );
+    defer capi.mneme_results_free(explicit_results);
+    try std.testing.expectEqual(capi.mneme_results_len(def_results), capi.mneme_results_len(explicit_results));
+    const d0 = std.mem.span(capi.mneme_results_id(def_results, 0).?);
+    const e0 = std.mem.span(capi.mneme_results_id(explicit_results, 0).?);
+    try std.testing.expect(std.mem.eql(u8, d0, e0));
+}
+
 test "hnsw stale maps to index stale" {
     var collection: ?*capi.mneme_collection_t = null;
     try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_create("docs", 3, capi.MNEME_METRIC_COSINE, &collection));
@@ -282,6 +405,13 @@ test "save through abi, load through abi, search after load works" {
     try std.testing.expectEqual(@as(u32, 1), capi.mneme_results_len(results));
 }
 
+test "load missing file maps to io/internal and keeps out null" {
+    var out: ?*capi.mneme_collection_t = null;
+    const status = capi.mneme_collection_load("/definitely/nonexistent/mneme-file.mneme", &out);
+    try std.testing.expect(status == capi.MNEME_ERROR_IO or status == capi.MNEME_ERROR_INTERNAL);
+    try std.testing.expect(out == null);
+}
+
 test "last error set on failure" {
     var collection: ?*capi.mneme_collection_t = null;
     try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_create("docs", 3, capi.MNEME_METRIC_COSINE, &collection));
@@ -290,6 +420,31 @@ test "last error set on failure" {
     _ = capi.mneme_collection_insert(collection, "a", &bad, bad.len, null);
     const msg = std.mem.span(capi.mneme_last_error());
     try std.testing.expect(msg.len > 0);
+}
+
+test "results accessors reject out-of-range index" {
+    var collection: ?*capi.mneme_collection_t = null;
+    try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_create("docs", 3, capi.MNEME_METRIC_COSINE, &collection));
+    defer capi.mneme_collection_free(collection);
+    const a = [_]f32{ 1.0, 0.0, 0.0 };
+    try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_insert(collection, "a", &a, a.len, null));
+    var results: ?*capi.mneme_results_t = null;
+    try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_search_flat(collection, &a, a.len, 1, &results));
+    defer capi.mneme_results_free(results);
+    try std.testing.expect(capi.mneme_results_id(results, 99) == null);
+    try std.testing.expectEqual(@as(f32, 0.0), capi.mneme_results_score(results, 99));
+}
+
+test "last error is thread-local across worker threads" {
+    var one = ThreadErrorCapture{ .mode = 0 };
+    var two = ThreadErrorCapture{ .mode = 1 };
+    const t1 = try std.Thread.spawn(.{}, captureThreadError, .{&one});
+    const t2 = try std.Thread.spawn(.{}, captureThreadError, .{&two});
+    t1.join();
+    t2.join();
+    try std.testing.expect(one.len > 0);
+    try std.testing.expect(two.len > 0);
+    try std.testing.expect(!std.mem.eql(u8, one.buf[0..one.len], two.buf[0..two.len]));
 }
 
 test "null collection arguments rejected" {
@@ -352,4 +507,26 @@ test "parallel flat searches on same collection are serialized safely" {
     t3.join();
 
     try std.testing.expect(!had_error.load(.seq_cst));
+}
+
+test "parallel insert and flat search on same collection are safe" {
+    var collection: ?*capi.mneme_collection_t = null;
+    try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_create("docs", 3, capi.MNEME_METRIC_COSINE, &collection));
+    defer capi.mneme_collection_free(collection);
+
+    const seed = [_]f32{ 1.0, 0.0, 0.0 };
+    try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_insert(collection, "seed", &seed, seed.len, null));
+
+    var had_error = std.atomic.Value(bool).init(false);
+    const ctx = ReaderWriterCtx{
+        .collection = collection.?,
+        .had_error = &had_error,
+    };
+    const reader = try std.Thread.spawn(.{}, readerWorker, .{&ctx});
+    const writer = try std.Thread.spawn(.{}, writerWorker, .{&ctx});
+    reader.join();
+    writer.join();
+
+    try std.testing.expect(!had_error.load(.seq_cst));
+    try std.testing.expect(capi.mneme_collection_count(collection) >= 1);
 }

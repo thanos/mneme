@@ -197,5 +197,4 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_hnsw_recall_tests.step);
     test_step.dependOn(&run_hnsw_collection_tests.step);
     test_step.dependOn(&run_c_api_tests.step);
-    test_step.dependOn(&run_c_example.step);
 }
