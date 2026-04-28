@@ -162,6 +162,26 @@ test "insert batch works and reduces call count" {
     try std.testing.expectEqual(@as(u64, 3), capi.mneme_collection_count(collection));
 }
 
+test "insert batch reports partial progress on null id entry" {
+    var collection: ?*capi.mneme_collection_t = null;
+    try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_create("docs", 3, capi.MNEME_METRIC_COSINE, &collection));
+    defer capi.mneme_collection_free(collection);
+
+    const ids = [_]?[*:0]const u8{ "a", null, "c" };
+    const vectors = [_]f32{
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+        0.0, 0.0, 1.0,
+    };
+    var inserted: u32 = 0;
+    try std.testing.expectEqual(
+        capi.MNEME_ERROR_INVALID_ARGUMENT,
+        capi.mneme_collection_insert_batch(collection, &ids, &vectors, 3, null, 3, &inserted),
+    );
+    try std.testing.expectEqual(@as(u32, 1), inserted);
+    try std.testing.expectEqual(@as(u64, 1), capi.mneme_collection_count(collection));
+}
+
 test "insert rejects wrong dimension" {
     var collection: ?*capi.mneme_collection_t = null;
     try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_create("docs", 3, capi.MNEME_METRIC_COSINE, &collection));
@@ -221,6 +241,34 @@ test "delete batch works and reports partial progress" {
     );
     try std.testing.expectEqual(@as(u32, 1), deleted);
     try std.testing.expectEqual(@as(u64, 1), capi.mneme_collection_count(collection));
+}
+
+test "delete batch reports partial progress on null id entry" {
+    var collection: ?*capi.mneme_collection_t = null;
+    try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_create("docs", 3, capi.MNEME_METRIC_COSINE, &collection));
+    defer capi.mneme_collection_free(collection);
+
+    const vectors = [_]f32{
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+        0.0, 0.0, 1.0,
+    };
+    const ids_insert = [_]?[*:0]const u8{ "a", "b", "c" };
+    var inserted: u32 = 0;
+    try std.testing.expectEqual(
+        capi.MNEME_OK,
+        capi.mneme_collection_insert_batch(collection, &ids_insert, &vectors, 3, null, 3, &inserted),
+    );
+    try std.testing.expectEqual(@as(u32, 3), inserted);
+
+    const ids_delete = [_]?[*:0]const u8{ "a", null, "c" };
+    var deleted: u32 = 0;
+    try std.testing.expectEqual(
+        capi.MNEME_ERROR_INVALID_ARGUMENT,
+        capi.mneme_collection_delete_batch(collection, &ids_delete, 3, &deleted),
+    );
+    try std.testing.expectEqual(@as(u32, 1), deleted);
+    try std.testing.expectEqual(@as(u64, 2), capi.mneme_collection_count(collection));
 }
 
 test "flat search works and result access works" {

@@ -271,6 +271,7 @@ pub export fn mneme_collection_insert_batch(
     var coll = &coll_handle.collection;
     while (inserted < n) : (inserted += 1) {
         const id_ptr = ids_slice[inserted] orelse {
+            if (out_inserted) |ptr| ptr.* = @intCast(inserted);
             setLastError("InvalidArgument");
             return MNEME_ERROR_INVALID_ARGUMENT;
         };
@@ -336,6 +337,7 @@ pub export fn mneme_collection_delete_batch(
     var coll = &coll_handle.collection;
     while (deleted < n) : (deleted += 1) {
         const id_ptr = ids_slice[deleted] orelse {
+            if (out_deleted) |ptr| ptr.* = @intCast(deleted);
             setLastError("InvalidArgument");
             return MNEME_ERROR_INVALID_ARGUMENT;
         };
@@ -482,6 +484,7 @@ pub export fn mneme_results_len(results: ?*const mneme_results_t) u32 {
         setLastError("InvalidArgument");
         return 0;
     }
+    clearLastError();
     return @intCast(asResultsConst(results.?).items.len);
 }
 
@@ -496,6 +499,7 @@ pub export fn mneme_results_id(results: ?*const mneme_results_t, index: u32) ?[*
         setLastError("InvalidArgument");
         return null;
     }
+    clearLastError();
     return resolved.items[idx].id_z.ptr;
 }
 
@@ -510,6 +514,7 @@ pub export fn mneme_results_score(results: ?*const mneme_results_t, index: u32) 
         setLastError("InvalidArgument");
         return 0.0;
     }
+    clearLastError();
     return resolved.items[idx].score;
 }
 

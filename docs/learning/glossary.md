@@ -1,0 +1,26 @@
+# Glossary
+
+- **embedding**: numeric vector produced by an ML model to represent input data.
+- **vector dimension**: number of numeric components in each vector.
+- **cosine similarity**: similarity based on angle between vectors.
+- **flat index**: brute-force search strategy that scans every point.
+- **flat scan**: searching by scoring every stored vector at query time.
+- **top-k**: the `k` highest-scoring search results.
+- **point id**: unique identifier for a stored point within a collection.
+- **score**: similarity value returned by search for each result.
+- **metric**: distance/similarity function used by a collection (Phase 1 uses cosine).
+- **allocator**: Zig interface used to request and release memory explicitly.
+- **slice**: runtime view over contiguous memory (`[]T`).
+- **error union**: Zig type (`!T`) that returns either value or error.
+- **optional**: Zig nullable-like type (`?T`) that is either value or `null`.
+- **errdefer**: Zig cleanup mechanism that runs only when a function exits with an error.
+- **search result**: `(id, score)` pair returned from nearest-neighbor query.
+- **freeSearchResults**: API helper that frees owned ids and the search result slice.
+- **canonical data**: persisted source-of-truth records (collection config + points).
+- **derived data**: runtime structures rebuilt from canonical records (flat/HNSW index state).
+- **magic bytes**: fixed leading bytes used to quickly reject wrong file types.
+- **format version**: explicit version field used for compatibility checks and future evolution.
+- **sentinel value**: reserved numeric marker with special meaning (`0xFFFFFFFF` for null metadata in v1).
+- **atomic write**: write-to-temp then rename to avoid partial overwrite of existing files.
+- **fsync**: flush file data and metadata to stable storage before rename/close.
+- **trailing garbage**: bytes appended past expected record count; treated as corruption in v1 loader.

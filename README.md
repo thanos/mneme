@@ -164,7 +164,7 @@ Not supported yet in Phase 4:
 
 ## Notes
 
-- `prompts/` contains local planning artifacts and is not part of the runtime package API.
+
 - The `.mneme` format is versioned. Unknown versions fail fast with `UnsupportedVersion`.
 - Phase 2 canonical files persist collection metadata + points only; index state is derived and rebuilt.
 - HNSW graph state is derived and in-memory only in Phase 3; it is not persisted.
