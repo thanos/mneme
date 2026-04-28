@@ -41,6 +41,21 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("mneme", mneme_module);
     b.installArtifact(exe);
 
+    const shared_lib = b.addLibrary(.{
+        .name = "mneme",
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/c_api.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    b.installArtifact(shared_lib);
+    shared_lib.installHeader(b.path("include/mneme.h"), "mneme.h");
+
+    const lib_step = b.step("lib", "Build shared C ABI library");
+    lib_step.dependOn(&shared_lib.step);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| run_cmd.addArgs(args);
@@ -140,6 +155,13 @@ pub fn build(b: *std.Build) void {
         mneme_module,
         "test/hnsw_collection_test.zig",
     );
+    const run_c_api_tests = addMnemeTest(
+        b,
+        target,
+        optimize,
+        mneme_module,
+        "test/c_api_test.zig",
+    );
 
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_root_tests.step);
@@ -153,4 +175,5 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_hnsw_tests.step);
     test_step.dependOn(&run_hnsw_recall_tests.step);
     test_step.dependOn(&run_hnsw_collection_tests.step);
+    test_step.dependOn(&run_c_api_tests.step);
 }

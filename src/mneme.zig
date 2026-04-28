@@ -9,6 +9,7 @@ pub const HnswConfig = @import("hnsw.zig").HnswConfig;
 pub const MnemeError = @import("errors.zig").MnemeError;
 pub const codec = @import("codec.zig");
 pub const storage = @import("storage.zig");
+pub const c_api = @import("c_api.zig");
 
 pub const vector = @import("vector.zig");
 pub const distance = @import("distance.zig");

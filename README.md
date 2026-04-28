@@ -2,7 +2,7 @@
 
 `mneme` is an embedded-first vector / memory database core written in Zig.
 
-The project currently implements **Phase 1 + Phase 2 + Phase 3 (in-memory HNSW)**.
+The project currently implements **Phase 1 + Phase 2 + Phase 3 + Phase 4 (stable C ABI)**.
 
 ## Phase 1 Supports
 
@@ -23,18 +23,33 @@ The project currently implements **Phase 1 + Phase 2 + Phase 3 (in-memory HNSW)*
 - `searchWithOptions` to select flat or HNSW at query time
 - `buildHnsw` to build derived ANN graph from canonical points
 
+## Phase 4 Adds
+
+- stable C ABI layer for collection lifecycle, search, HNSW, and persistence
+- shared-library build target (`zig build lib`)
+- installable C header (`include/mneme.h`)
+
 ## Not Supported Yet
 
 - persisted ANN indexes (including persisted HNSW graph)
 - metadata filtering
 - network server mode
-- Python/Elixir/C bindings
+- Python/Elixir wrappers
+- metadata filtering
 
 ## Build
 
 ```bash
 zig build
 ```
+
+## Build Shared Library (C ABI)
+
+```bash
+zig build lib
+```
+
+This builds a shared library (`libmneme.dylib` on macOS, `libmneme.so` on Linux) and installs `mneme.h`.
 
 ## Test
 
@@ -108,12 +123,50 @@ pub fn main() !void {
 }
 ```
 
+## C ABI
+
+The C ABI exposes:
+
+- collection create/load/free
+- insert/delete/count
+- flat search and HNSW search
+- HNSW build
+- save/load
+- result access + result free
+
+Header:
+
+- `include/mneme.h`
+
+Tiny C usage sketch:
+
+```c
+#include "mneme.h"
+
+mneme_collection_t *c = NULL;
+mneme_collection_create("docs", 3, MNEME_METRIC_COSINE, &c);
+float v[3] = {1.0f, 0.0f, 0.0f};
+mneme_collection_insert(c, "doc_1", v, 3, NULL);
+mneme_results_t *r = NULL;
+mneme_collection_search_flat(c, v, 3, 1, &r);
+mneme_results_free(r);
+mneme_collection_free(c);
+```
+
+Not supported yet in Phase 4:
+
+- Python packaging/wrapper
+- Elixir wrapper
+- metadata filtering ABI
+- HNSW persistence
+
 ## Notes
 
 - `prompts/` contains local planning artifacts and is not part of the runtime package API.
 - The `.mneme` format is versioned. Unknown versions fail fast with `UnsupportedVersion`.
 - Phase 2 canonical files persist collection metadata + points only; index state is derived and rebuilt.
 - HNSW graph state is derived and in-memory only in Phase 3; it is not persisted.
+- Phase 4 C ABI stores `mneme_last_error` in thread-local storage (per-thread error text).
 - Current `.mneme` format (`format_version = 2`) rejects trailing bytes as `CorruptRecord` (strict parser).
 - Phase 2 files include a CRC32 footer checksum over the encoded payload.
 - Durable save mode (`fsync_on_save = true`) fsyncs both the data file and its parent directory after atomic rename.
@@ -140,7 +193,7 @@ pub fn main() !void {
 
 - Phase 2: persistence
 - Phase 3: HNSW (implemented in-memory)
-- Phase 4: C ABI or metadata filtering
-- Phase 5: Python packaging
+- Phase 4: C ABI (implemented)
+- Phase 5: Python packaging or metadata filtering
 - Phase 6: Elixir wrapper / server mode
 - Later: HNSW persistence and SIMD acceleration
