@@ -26,6 +26,21 @@ pub const mneme_results_t = opaque {};
 
 const CCollection = struct {
     collection: mneme.Collection,
+    mutex: SpinLock = .{},
+};
+
+const SpinLock = struct {
+    state: std.atomic.Value(u8) = .init(0),
+
+    fn lock(self: *SpinLock) void {
+        while (self.state.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) {
+            std.Thread.yield() catch {};
+        }
+    }
+
+    fn unlock(self: *SpinLock) void {
+        self.state.store(0, .release);
+    }
 };
 
 const CResultItem = struct {
@@ -87,10 +102,6 @@ fn mapError(err: anyerror) mneme_status_t {
 }
 
 fn asCollection(handle: *mneme_collection_t) *CCollection {
-    return @ptrCast(@alignCast(handle));
-}
-
-fn asCollectionConst(handle: *const mneme_collection_t) *const CCollection {
     return @ptrCast(@alignCast(handle));
 }
 
@@ -202,8 +213,11 @@ pub export fn mneme_collection_insert(
         setLastError("InvalidArgument");
         return MNEME_ERROR_INVALID_ARGUMENT;
     };
+    const coll_handle = asCollection(collection.?);
+    coll_handle.mutex.lock();
+    defer coll_handle.mutex.unlock();
     const metadata_slice: ?[]const u8 = if (metadata) |m| std.mem.span(m) else null;
-    asCollection(collection.?).collection.insert(std.mem.span(id.?), vector_slice, metadata_slice) catch |err| {
+    coll_handle.collection.insert(std.mem.span(id.?), vector_slice, metadata_slice) catch |err| {
         return mapError(err);
     };
     clearLastError();
@@ -243,7 +257,10 @@ pub export fn mneme_collection_insert_batch(
     const vectors_slice = vectors.?[0..total];
     const metadata_slice: ?[]const ?[*:0]const u8 = if (metadata) |m| m[0..n] else null;
     var inserted: usize = 0;
-    var coll = &asCollection(collection.?).collection;
+    const coll_handle = asCollection(collection.?);
+    coll_handle.mutex.lock();
+    defer coll_handle.mutex.unlock();
+    var coll = &coll_handle.collection;
     while (inserted < n) : (inserted += 1) {
         const id_ptr = ids_slice[inserted] orelse {
             setLastError("InvalidArgument");
@@ -273,7 +290,10 @@ pub export fn mneme_collection_delete(
         setLastError("InvalidArgument");
         return MNEME_ERROR_INVALID_ARGUMENT;
     }
-    asCollection(collection.?).collection.delete(std.mem.span(id.?)) catch |err| {
+    const coll_handle = asCollection(collection.?);
+    coll_handle.mutex.lock();
+    defer coll_handle.mutex.unlock();
+    coll_handle.collection.delete(std.mem.span(id.?)) catch |err| {
         return mapError(err);
     };
     clearLastError();
@@ -302,7 +322,10 @@ pub export fn mneme_collection_delete_batch(
     const n: usize = @intCast(count);
     const ids_slice = ids.?[0..n];
     var deleted: usize = 0;
-    var coll = &asCollection(collection.?).collection;
+    const coll_handle = asCollection(collection.?);
+    coll_handle.mutex.lock();
+    defer coll_handle.mutex.unlock();
+    var coll = &coll_handle.collection;
     while (deleted < n) : (deleted += 1) {
         const id_ptr = ids_slice[deleted] orelse {
             setLastError("InvalidArgument");
@@ -323,8 +346,11 @@ pub export fn mneme_collection_count(collection: ?*const mneme_collection_t) u64
         setLastError("InvalidArgument");
         return 0;
     }
+    const coll_handle: *CCollection = @ptrCast(@alignCast(@constCast(collection.?)));
+    coll_handle.mutex.lock();
+    defer coll_handle.mutex.unlock();
     clearLastError();
-    return @intCast(asCollectionConst(collection.?).collection.count());
+    return @intCast(coll_handle.collection.count());
 }
 
 pub export fn mneme_collection_search_flat(
@@ -343,7 +369,10 @@ pub export fn mneme_collection_search_flat(
         setLastError("InvalidArgument");
         return MNEME_ERROR_INVALID_ARGUMENT;
     };
-    var coll = &asCollection(collection.?).collection;
+    const coll_handle = asCollection(collection.?);
+    coll_handle.mutex.lock();
+    defer coll_handle.mutex.unlock();
+    var coll = &coll_handle.collection;
     const raw = coll.search(query_slice, @intCast(top_k)) catch |err| return mapError(err);
     convertAndTakeResults(coll, raw, out_results.?) catch |err| return mapError(err);
     clearLastError();
@@ -358,8 +387,11 @@ pub export fn mneme_collection_build_hnsw(
         setLastError("InvalidArgument");
         return MNEME_ERROR_INVALID_ARGUMENT;
     }
+    const coll_handle = asCollection(collection.?);
+    coll_handle.mutex.lock();
+    defer coll_handle.mutex.unlock();
     const cfg = config.?.*;
-    asCollection(collection.?).collection.buildHnsw(.{
+    coll_handle.collection.buildHnsw(.{
         .m = cfg.m,
         .ef_construction = cfg.ef_construction,
         .ef_search = cfg.ef_search,
@@ -386,7 +418,10 @@ pub export fn mneme_collection_search_hnsw(
         setLastError("InvalidArgument");
         return MNEME_ERROR_INVALID_ARGUMENT;
     };
-    var coll = &asCollection(collection.?).collection;
+    const coll_handle = asCollection(collection.?);
+    coll_handle.mutex.lock();
+    defer coll_handle.mutex.unlock();
+    var coll = &coll_handle.collection;
     const search_options = mneme.SearchOptions{
         .index = .hnsw,
         .ef_search = if (ef_search == 0) null else @as(usize, ef_search),
@@ -405,7 +440,10 @@ pub export fn mneme_collection_save(
         setLastError("InvalidArgument");
         return MNEME_ERROR_INVALID_ARGUMENT;
     }
-    asCollection(collection.?).collection.saveToFile(std.mem.span(path.?)) catch |err| return mapError(err);
+    const coll_handle = asCollection(collection.?);
+    coll_handle.mutex.lock();
+    defer coll_handle.mutex.unlock();
+    coll_handle.collection.saveToFile(std.mem.span(path.?)) catch |err| return mapError(err);
     clearLastError();
     return MNEME_OK;
 }

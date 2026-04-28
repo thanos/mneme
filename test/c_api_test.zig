@@ -3,6 +3,36 @@ const mneme = @import("mneme");
 const capi = mneme.c_api;
 const helpers = @import("storage_test_helpers.zig");
 
+const ParallelSearchCtx = struct {
+    collection: *capi.mneme_collection_t,
+    query: [3]f32,
+    iterations: usize,
+    had_error: *std.atomic.Value(bool),
+};
+
+fn parallelFlatSearchWorker(ctx: *const ParallelSearchCtx) void {
+    var i: usize = 0;
+    while (i < ctx.iterations) : (i += 1) {
+        var results: ?*capi.mneme_results_t = null;
+        const status = capi.mneme_collection_search_flat(ctx.collection, &ctx.query, ctx.query.len, 2, &results);
+        if (status != capi.MNEME_OK) {
+            ctx.had_error.store(true, .seq_cst);
+            return;
+        }
+        if (results) |r| {
+            if (capi.mneme_results_len(r) == 0) {
+                ctx.had_error.store(true, .seq_cst);
+                capi.mneme_results_free(results);
+                return;
+            }
+        } else {
+            ctx.had_error.store(true, .seq_cst);
+            return;
+        }
+        capi.mneme_results_free(results);
+    }
+}
+
 test "abi version returns nonzero" {
     try std.testing.expect(capi.mneme_abi_version() != 0);
 }
@@ -285,4 +315,41 @@ test "duplicate id and invalid hnsw config map to invalid argument" {
         capi.MNEME_ERROR_INVALID_ARGUMENT,
         capi.mneme_collection_build_hnsw(collection, &bad_cfg),
     );
+}
+
+test "parallel flat searches on same collection are serialized safely" {
+    var collection: ?*capi.mneme_collection_t = null;
+    try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_create("docs", 3, capi.MNEME_METRIC_COSINE, &collection));
+    defer capi.mneme_collection_free(collection);
+
+    const ids = [_]?[*:0]const u8{ "a", "b", "c", "d" };
+    const vectors = [_]f32{
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+        0.0, 0.0, 1.0,
+        0.7, 0.2, 0.1,
+    };
+    var inserted: u32 = 0;
+    try std.testing.expectEqual(
+        capi.MNEME_OK,
+        capi.mneme_collection_insert_batch(collection, &ids, &vectors, 3, null, ids.len, &inserted),
+    );
+    try std.testing.expectEqual(@as(u32, ids.len), inserted);
+
+    var had_error = std.atomic.Value(bool).init(false);
+    const ctx = ParallelSearchCtx{
+        .collection = collection.?,
+        .query = .{ 1.0, 0.0, 0.0 },
+        .iterations = 200,
+        .had_error = &had_error,
+    };
+
+    const t1 = try std.Thread.spawn(.{}, parallelFlatSearchWorker, .{&ctx});
+    const t2 = try std.Thread.spawn(.{}, parallelFlatSearchWorker, .{&ctx});
+    const t3 = try std.Thread.spawn(.{}, parallelFlatSearchWorker, .{&ctx});
+    t1.join();
+    t2.join();
+    t3.join();
+
+    try std.testing.expect(!had_error.load(.seq_cst));
 }
