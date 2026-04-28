@@ -138,6 +138,7 @@ The C ABI exposes:
 Header:
 
 - `include/mneme.h`
+- practical integration guide: `docs/learning/phase_04_language_wrapper_guide.md`
 
 Tiny C usage sketch:
 
