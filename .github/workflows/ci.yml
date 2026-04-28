@@ -29,3 +29,6 @@ jobs:
 
       - name: Test
         run: zig build test
+
+      - name: C integration
+        run: zig build c-integration
