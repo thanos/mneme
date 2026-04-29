@@ -197,6 +197,7 @@ pub fn build(b: *std.Build) void {
     const install_lib_dir = b.getInstallPath(.lib, "");
     const install_header_dir = b.getInstallPath(.header, "");
     const smoke_bin_path = b.getInstallPath(.bin, "mneme_c_smoke");
+    const ensure_smoke_bin_dir = b.addSystemCommand(&.{ "mkdir", "-p", b.getInstallPath(.bin, "") });
     const compile_c_example = b.addSystemCommand(&.{ b.graph.zig_exe, "cc" });
     compile_c_example.addArg("examples/c/basic.c");
     compile_c_example.addArg(b.fmt("-I{s}", .{install_header_dir}));
@@ -205,6 +206,7 @@ pub fn build(b: *std.Build) void {
     compile_c_example.addArg(b.fmt("-Wl,-rpath,{s}", .{install_lib_dir}));
     compile_c_example.addArg("-o");
     compile_c_example.addArg(smoke_bin_path);
+    compile_c_example.step.dependOn(&ensure_smoke_bin_dir.step);
     compile_c_example.step.dependOn(&install_shared_lib.step);
     compile_c_example.step.dependOn(&install_shared_header.step);
 
