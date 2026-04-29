@@ -50,6 +50,34 @@
 - `mneme_results_score`
 - `mneme_results_free`
 
+## v1 ABI Function Set
+
+Wrappers should treat the following symbol set as the Phase 4 / ABI v1 baseline.
+If wrappers bind optional/additive symbols in future releases, they should probe for
+symbol presence at load time (or use a maintained version/feature matrix) instead of
+assuming every `abi_version = 1` library exports every additive symbol.
+
+| Symbol | Required in ABI v1 |
+|---|---|
+| `mneme_abi_version` | yes |
+| `mneme_last_error` | yes |
+| `mneme_collection_create` | yes |
+| `mneme_collection_free` | yes |
+| `mneme_collection_insert` | yes |
+| `mneme_collection_insert_batch` | yes |
+| `mneme_collection_delete` | yes |
+| `mneme_collection_delete_batch` | yes |
+| `mneme_collection_count` | yes |
+| `mneme_collection_search_flat` | yes |
+| `mneme_collection_build_hnsw` | yes |
+| `mneme_collection_search_hnsw` | yes |
+| `mneme_collection_save` | yes |
+| `mneme_collection_load` | yes |
+| `mneme_results_len` | yes |
+| `mneme_results_id` | yes |
+| `mneme_results_score` | yes |
+| `mneme_results_free` | yes |
+
 HNSW search ABI convention:
 
 - `mneme_collection_search_hnsw(..., ef_search, ...)` treats `ef_search = 0` as "use default configured ef_search".
@@ -71,7 +99,7 @@ HNSW search ABI convention:
 - operations on the same collection handle are serialized by an internal per-collection mutex in the C ABI layer.
 - same-handle access is thread-safe but not parallelized (single critical section per handle).
 - `mneme_collection_free` is not safe to call concurrently with other operations on the same handle; callers must serialize free against in-flight calls.
-- `mneme_collection_save` currently holds the per-collection lock for the duration of the save path, including file I/O and fsync operations.
+- `mneme_collection_save` snapshots canonical data under lock and performs file I/O from the snapshot after releasing the handle lock.
 
 ## Known Limitations
 
@@ -116,3 +144,5 @@ The C ABI is a boundary layer that delegates to the same engine logic; wrapper r
 - Any change to existing function signatures, status-code values, or ownership contracts must bump `mneme_abi_version`.
 - Removed exports require a version bump and should be documented with migration notes in this file.
 - Wrappers should check `mneme_abi_version()` at load time and fail fast on unsupported versions.
+- For additive symbols on an existing ABI version, wrappers should use symbol probing (e.g. `dlsym`/equivalent) or a maintained version/feature matrix.
+- Keep the `v1 ABI Function Set` table in this file updated whenever exports are added/removed.

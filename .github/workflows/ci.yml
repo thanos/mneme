@@ -66,6 +66,10 @@ jobs:
         run: zig build coverage
         continue-on-error: true
 
+      - name: Coverage (C integration)
+        run: zig build coverage-c-integration
+        continue-on-error: true
+
       - name: Upload kcov artifact
         uses: actions/upload-artifact@v4
         if: always()

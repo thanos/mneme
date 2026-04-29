@@ -215,6 +215,10 @@ pub fn build(b: *std.Build) void {
     c_integration_step.dependOn(&run_c_example.step);
 
     const coverage_step = b.step("coverage", "Run test coverage with kcov");
+    const coverage_c_integration_step = b.step(
+        "coverage-c-integration",
+        "Run kcov for C ABI smoke integration binary",
+    );
 
     const coverage_vector_tests = addMnemeCoverageRun(
         b,
@@ -315,6 +319,19 @@ pub fn build(b: *std.Build) void {
         b.getInstallPath(.prefix, "kcov/c_api"),
     );
     coverage_step.dependOn(&coverage_c_api_tests.step);
+
+    const c_smoke_coverage_out_dir = b.getInstallPath(.prefix, "kcov/c_integration");
+    const ensure_c_smoke_coverage_out_dir = b.addSystemCommand(&.{ "mkdir", "-p", c_smoke_coverage_out_dir });
+    const coverage_c_smoke = b.addSystemCommand(&.{
+        "kcov",
+        "--clean",
+        "--include-path=src",
+        c_smoke_coverage_out_dir,
+        smoke_bin_path,
+    });
+    coverage_c_smoke.step.dependOn(&ensure_c_smoke_coverage_out_dir.step);
+    coverage_c_smoke.step.dependOn(&compile_c_example.step);
+    coverage_c_integration_step.dependOn(&coverage_c_smoke.step);
 
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_root_tests.step);

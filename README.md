@@ -69,7 +69,18 @@ zig build lint
 zig build coverage
 ```
 
-Requires `kcov` installed on the system. Coverage HTML output is written under `zig-out/kcov/`.
+Current support is Linux-oriented (same environment as CI) and requires `kcov` installed on the system.
+Coverage HTML output is written under `zig-out/kcov/`.
+
+This step covers Zig test binaries only.
+
+Optional C smoke coverage:
+
+```bash
+zig build coverage-c-integration
+```
+
+This runs the C ABI smoke binary (`mneme_c_smoke`) under `kcov` and writes output under `zig-out/kcov/c_integration/`.
 
 ## Benchmark (Baseline)
 

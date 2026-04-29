@@ -67,7 +67,20 @@ mneme_status_t mneme_collection_insert(
     const char *metadata
 );
 
-/* Inserts many rows from contiguous vectors and parallel id/metadata arrays. */
+/*
+ * Inserts many rows from contiguous vectors and parallel id/metadata arrays.
+ *
+ * Semantics:
+ * - fail-fast and non-transactional: rows inserted before the first failing row remain inserted.
+ * - rows are processed in index order [0, count).
+ * - out_inserted (if non-null) is always written with the number of rows inserted
+ *   before return (including partial progress on error).
+ *
+ * Input layout:
+ * - ids points to count string pointers (each id must be non-null and NUL-terminated).
+ * - vectors points to count * vector_len contiguous floats.
+ * - metadata may be null; when non-null it points to count entries where each entry may be null.
+ */
 mneme_status_t mneme_collection_insert_batch(
     mneme_collection_t *collection,
     const char *const *ids,
@@ -84,7 +97,15 @@ mneme_status_t mneme_collection_delete(
     const char *id
 );
 
-/* Deletes many rows by id array. */
+/*
+ * Deletes many rows by id array.
+ *
+ * Semantics:
+ * - fail-fast and non-transactional: deletions completed before the first failing row remain applied.
+ * - rows are processed in index order [0, count).
+ * - out_deleted (if non-null) is always written with the number of rows deleted
+ *   before return (including partial progress on error).
+ */
 mneme_status_t mneme_collection_delete_batch(
     mneme_collection_t *collection,
     const char *const *ids,
