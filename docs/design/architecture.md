@@ -1,7 +1,7 @@
-# Architecture: `mneme` Phase 1 + 2 + 3 + 4
+# Architecture: `mneme` Phase 1 + 2 + 3 + 4 + 5
 
-`mneme` Phase 1 is a single-process, in-memory vector database core with flat brute-force search.
-It is intentionally single-threaded and correctness-first.
+`mneme` is a single-process embedded vector core with explicit ownership and a stable C ABI.
+Phase 5 focuses on productization and ABI hardening, not new search features.
 
 ## Core Components
 
@@ -13,7 +13,7 @@ It is intentionally single-threaded and correctness-first.
 - `HnswIndex`: in-memory approximate nearest-neighbor graph.
 - `Storage`: file save/load orchestration for collections.
 - `Codec`: binary format encode/decode.
-- `C ABI`: stable exported layer (`src/c_api.zig`, `include/mneme.h`) over core Zig API.
+- `C ABI`: stable exported layer (`src/c_api.zig`, `include/mneme.h`) over core Zig API with status-code/error-text boundary semantics.
 
 ## Data Flow
 
@@ -36,6 +36,12 @@ ABI flow:
 2. C ABI validates pointers and maps types/errors.
 3. C ABI delegates to `Collection`/search/storage APIs.
 4. C ABI returns status codes + borrowed diagnostics (`mneme_last_error`).
+
+Concurrency note:
+
+- the Zig-native API remains caller-synchronized.
+- C ABI operations on the same handle are serialized by a per-handle lock.
+- long operations (`save`, `build_hnsw`) use snapshotting to reduce lock hold time.
 
 ## Validation Responsibilities
 
