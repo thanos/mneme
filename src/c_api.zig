@@ -1,5 +1,9 @@
 const std = @import("std");
-const mneme = @import("mneme.zig");
+const Collection = @import("collection.zig").Collection;
+const SearchResult = @import("index.zig").SearchResult;
+const Metric = @import("index.zig").Metric;
+const SearchOptions = @import("index.zig").SearchOptions;
+const MnemeError = @import("errors.zig").MnemeError;
 
 pub const mneme_status_t = u32;
 pub const MNEME_OK: mneme_status_t = 0;
@@ -26,7 +30,7 @@ pub const mneme_collection_t = opaque {};
 pub const mneme_results_t = opaque {};
 
 const CCollection = struct {
-    collection: mneme.Collection,
+    collection: Collection,
     mutex: SpinLock = .{},
 };
 
@@ -80,23 +84,23 @@ fn mapError(err: anyerror) mneme_status_t {
     setLastError(@errorName(err));
     return switch (err) {
         error.OutOfMemory => MNEME_ERROR_OUT_OF_MEMORY,
-        mneme.MnemeError.InvalidDimension,
-        mneme.MnemeError.EmptyVector,
-        mneme.MnemeError.VectorLengthMismatch,
+        MnemeError.InvalidDimension,
+        MnemeError.EmptyVector,
+        MnemeError.VectorLengthMismatch,
         => MNEME_ERROR_DIMENSION_MISMATCH,
-        mneme.MnemeError.IndexNotBuilt => MNEME_ERROR_INDEX_NOT_BUILT,
-        mneme.MnemeError.IndexStale => MNEME_ERROR_INDEX_STALE,
-        mneme.MnemeError.DuplicateId,
-        mneme.MnemeError.IdNotFound,
-        mneme.MnemeError.InvalidIndexConfig,
-        mneme.MnemeError.InvalidEfSearch,
-        mneme.MnemeError.ZeroVector,
+        MnemeError.IndexNotBuilt => MNEME_ERROR_INDEX_NOT_BUILT,
+        MnemeError.IndexStale => MNEME_ERROR_INDEX_STALE,
+        MnemeError.DuplicateId,
+        MnemeError.IdNotFound,
+        MnemeError.InvalidIndexConfig,
+        MnemeError.InvalidEfSearch,
+        MnemeError.ZeroVector,
         => MNEME_ERROR_INVALID_ARGUMENT,
-        mneme.MnemeError.InvalidMagic,
-        mneme.MnemeError.UnsupportedVersion,
-        mneme.MnemeError.TruncatedFile,
-        mneme.MnemeError.CorruptRecord,
-        mneme.MnemeError.InvalidMetric,
+        MnemeError.InvalidMagic,
+        MnemeError.UnsupportedVersion,
+        MnemeError.TruncatedFile,
+        MnemeError.CorruptRecord,
+        MnemeError.InvalidMetric,
         error.FileNotFound,
         error.PathAlreadyExists,
         error.AccessDenied,
@@ -121,20 +125,21 @@ fn asResultsConst(handle: *const mneme_results_t) *const CResults {
     return @ptrCast(@alignCast(handle));
 }
 
-fn floatSlice(ptr: ?[*]const f32, len: usize) ?[]const f32 {
+fn floatSlice(ptr: ?[*]const f32, len: u32) ?[]const f32 {
     if (len == 0) return &.{};
     if (ptr == null) return null;
-    return ptr.?[0..len];
+    const usize_len: usize = @intCast(len);
+    return ptr.?[0..usize_len];
 }
 
-fn metricFromC(metric: mneme_metric_t) ?mneme.Metric {
+fn metricFromC(metric: mneme_metric_t) ?Metric {
     if (metric == MNEME_METRIC_COSINE) return .cosine;
     return null;
 }
 
 fn convertAndTakeResults(
-    collection: *mneme.Collection,
-    raw_results: []mneme.SearchResult,
+    collection: *Collection,
+    raw_results: []SearchResult,
     out_results: *?*mneme_results_t,
 ) !void {
     defer collection.freeSearchResults(raw_results);
@@ -186,8 +191,8 @@ pub export fn mneme_collection_create(
         return MNEME_ERROR_INVALID_ARGUMENT;
     };
 
-    const dim: usize = dimension;
-    var collection = mneme.Collection.init(abi_allocator, std.mem.span(name.?), dim, resolved_metric) catch |err| {
+    const dim: usize = @intCast(dimension);
+    var collection = Collection.init(abi_allocator, std.mem.span(name.?), dim, resolved_metric) catch |err| {
         return mapError(err);
     };
     errdefer collection.deinit();
@@ -405,10 +410,22 @@ pub export fn mneme_collection_build_hnsw(
     coll_handle.mutex.lock();
     defer coll_handle.mutex.unlock();
     const cfg = config.?.*;
+    const m_usize = std.math.cast(usize, cfg.m) orelse {
+        setLastError("InvalidIndexConfig");
+        return MNEME_ERROR_INVALID_ARGUMENT;
+    };
+    const ef_construction_usize = std.math.cast(usize, cfg.ef_construction) orelse {
+        setLastError("InvalidIndexConfig");
+        return MNEME_ERROR_INVALID_ARGUMENT;
+    };
+    const ef_search_usize = std.math.cast(usize, cfg.ef_search) orelse {
+        setLastError("InvalidIndexConfig");
+        return MNEME_ERROR_INVALID_ARGUMENT;
+    };
     coll_handle.collection.buildHnsw(.{
-        .m = cfg.m,
-        .ef_construction = cfg.ef_construction,
-        .ef_search = cfg.ef_search,
+        .m = m_usize,
+        .ef_construction = ef_construction_usize,
+        .ef_search = ef_search_usize,
         .seed = cfg.seed,
     }) catch |err| return mapError(err);
     clearLastError();
@@ -436,7 +453,7 @@ pub export fn mneme_collection_search_hnsw(
     coll_handle.mutex.lock();
     defer coll_handle.mutex.unlock();
     var coll = &coll_handle.collection;
-    const search_options = mneme.SearchOptions{
+    const search_options = SearchOptions{
         .index = .hnsw,
         .ef_search = if (ef_search == MNEME_EF_SEARCH_DEFAULT) null else @as(usize, ef_search),
     };
@@ -471,7 +488,7 @@ pub export fn mneme_collection_load(
         return MNEME_ERROR_INVALID_ARGUMENT;
     }
     out_collection.?.* = null;
-    var collection = mneme.Collection.loadFromFile(abi_allocator, std.mem.span(path.?)) catch |err| {
+    var collection = Collection.loadFromFile(abi_allocator, std.mem.span(path.?)) catch |err| {
         return mapError(err);
     };
     errdefer collection.deinit();
