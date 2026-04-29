@@ -63,6 +63,14 @@ zig build test
 zig build lint
 ```
 
+## Coverage (kcov)
+
+```bash
+zig build coverage
+```
+
+Requires `kcov` installed on the system. Coverage HTML output is written under `zig-out/kcov/`.
+
 ## Benchmark (Baseline)
 
 ```bash

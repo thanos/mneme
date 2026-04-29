@@ -27,8 +27,22 @@ jobs:
       - name: Format check
         run: zig fmt --check .
 
+      - name: Install kcov
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y kcov
+
       - name: Test
         run: zig build test
 
       - name: C integration
         run: zig build c-integration
+
+      - name: Coverage
+        run: zig build coverage
+
+      - name: Upload kcov artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kcov-coverage
+          path: zig-out/kcov
