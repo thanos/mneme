@@ -27,5 +27,52 @@ jobs:
       - name: Format check
         run: zig fmt --check .
 
+      - name: Cache kcov install
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mneme-kcov
+          key: ${{ runner.os }}-kcov-v1
+
+      - name: Install kcov (from source)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git cmake make g++ \
+            libcurl4-openssl-dev libelf-dev libdw-dev binutils-dev zlib1g-dev \
+            libiberty-dev python3
+
+          KCOV_ROOT="$HOME/.cache/mneme-kcov"
+          KCOV_BIN="$KCOV_ROOT/bin/kcov"
+          if [ -x "$KCOV_BIN" ]; then
+            echo "$KCOV_ROOT/bin" >> "$GITHUB_PATH"
+            "$KCOV_BIN" --version
+            exit 0
+          fi
+
+          git clone --depth 1 https://github.com/SimonKagstrom/kcov.git
+          cmake -S kcov -B kcov/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build kcov/build -j"$(nproc)"
+          cmake --install kcov/build --prefix "$KCOV_ROOT"
+          echo "$KCOV_ROOT/bin" >> "$GITHUB_PATH"
+          "$KCOV_BIN" --version
+
       - name: Test
         run: zig build test
+
+      - name: C integration
+        run: zig build c-integration
+
+      - name: Coverage
+        run: zig build coverage
+        continue-on-error: true
+
+      - name: Coverage (C integration)
+        run: zig build coverage-c-integration
+        continue-on-error: true
+
+      - name: Upload kcov artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kcov-coverage
+          path: zig-out/kcov
