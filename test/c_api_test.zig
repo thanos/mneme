@@ -139,7 +139,7 @@ test "create rejects null out pointer" {
 }
 
 test "create rejects null name" {
-    var collection: ?*capi.mneme_collection_t = null;
+    var collection: ?*capi.mneme_collection_t = @ptrFromInt(1);
     try std.testing.expectEqual(
         capi.MNEME_ERROR_INVALID_ARGUMENT,
         capi.mneme_collection_create(null, 3, capi.MNEME_METRIC_COSINE, &collection),
@@ -541,10 +541,27 @@ test "last error is thread-local across worker threads" {
 
 test "null collection arguments rejected" {
     const a = [_]f32{ 1.0, 0.0, 0.0 };
-    var results: ?*capi.mneme_results_t = null;
+    var flat_results: ?*capi.mneme_results_t = @ptrFromInt(1);
+    var hnsw_results: ?*capi.mneme_results_t = @ptrFromInt(1);
     try std.testing.expectEqual(capi.MNEME_ERROR_INVALID_ARGUMENT, capi.mneme_collection_insert(null, "a", &a, a.len, null));
     try std.testing.expectEqual(capi.MNEME_ERROR_INVALID_ARGUMENT, capi.mneme_collection_delete(null, "a"));
-    try std.testing.expectEqual(capi.MNEME_ERROR_INVALID_ARGUMENT, capi.mneme_collection_search_flat(null, &a, a.len, 1, &results));
+    try std.testing.expectEqual(
+        capi.MNEME_ERROR_INVALID_ARGUMENT,
+        capi.mneme_collection_search_flat(null, &a, a.len, 1, &flat_results),
+    );
+    try std.testing.expect(flat_results == null);
+    try std.testing.expectEqual(
+        capi.MNEME_ERROR_INVALID_ARGUMENT,
+        capi.mneme_collection_search_hnsw(
+            null,
+            &a,
+            a.len,
+            1,
+            capi.MNEME_EF_SEARCH_DEFAULT,
+            &hnsw_results,
+        ),
+    );
+    try std.testing.expect(hnsw_results == null);
 }
 
 test "duplicate id and invalid hnsw config map to invalid argument" {

@@ -200,11 +200,11 @@ pub export fn mneme_collection_create(
     metric: mneme_metric_t,
     out_collection: ?*?*mneme_collection_t,
 ) mneme_status_t {
+    if (out_collection) |out| out.* = null;
     if (out_collection == null or name == null) {
         setLastError("InvalidArgument");
         return MNEME_ERROR_INVALID_ARGUMENT;
     }
-    out_collection.?.* = null;
     const resolved_metric = metricFromC(metric) orelse {
         setLastError("InvalidMetric");
         return MNEME_ERROR_INVALID_ARGUMENT;
@@ -406,11 +406,11 @@ pub export fn mneme_collection_search_flat(
     top_k: u32,
     out_results: ?*?*mneme_results_t,
 ) mneme_status_t {
+    if (out_results) |out| out.* = null;
     if (collection == null or out_results == null) {
         setLastError("InvalidArgument");
         return MNEME_ERROR_INVALID_ARGUMENT;
     }
-    out_results.?.* = null;
     const query_slice = floatSlice(query, query_len) orelse {
         setLastError("InvalidArgument");
         return MNEME_ERROR_INVALID_ARGUMENT;
@@ -486,11 +486,11 @@ pub export fn mneme_collection_search_hnsw(
     ef_search: u32,
     out_results: ?*?*mneme_results_t,
 ) mneme_status_t {
+    if (out_results) |out| out.* = null;
     if (collection == null or out_results == null) {
         setLastError("InvalidArgument");
         return MNEME_ERROR_INVALID_ARGUMENT;
     }
-    out_results.?.* = null;
     const query_slice = floatSlice(query, query_len) orelse {
         setLastError("InvalidArgument");
         return MNEME_ERROR_INVALID_ARGUMENT;
@@ -539,11 +539,11 @@ pub export fn mneme_collection_load(
     path: ?[*:0]const u8,
     out_collection: ?*?*mneme_collection_t,
 ) mneme_status_t {
+    if (out_collection) |out| out.* = null;
     if (path == null or out_collection == null) {
         setLastError("InvalidArgument");
         return MNEME_ERROR_INVALID_ARGUMENT;
     }
-    out_collection.?.* = null;
     var collection = Collection.loadFromFile(abi_allocator, std.mem.span(path.?)) catch |err| {
         return mapError(err);
     };

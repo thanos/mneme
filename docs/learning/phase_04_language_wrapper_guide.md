@@ -11,7 +11,7 @@ It focuses on wrapper-facing usage patterns and pitfalls.
   - `mneme_collection_free` for collections
   - `mneme_results_free` for result sets
 - `mneme_results_id` returns a borrowed pointer; copy it into language-owned memory if needed after results are freed.
-- `MNEME_EF_SEARCH_DEFAULT` means \"use configured default ef_search\" in HNSW search.
+- `MNEME_EF_SEARCH_DEFAULT` means "use configured default ef_search" in HNSW search.
 
 ## 2) Build/Link Setup
 
