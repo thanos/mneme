@@ -20,7 +20,7 @@
 - **derived data**: runtime structures rebuilt from canonical records (flat/HNSW index state).
 - **magic bytes**: fixed leading bytes used to quickly reject wrong file types.
 - **format version**: explicit version field used for compatibility checks and future evolution.
-- **sentinel value**: reserved numeric marker with special meaning (`0xFFFFFFFF` for null metadata in v1).
+- **sentinel value**: reserved numeric marker with special meaning (`0xFFFFFFFF` / `std.math.maxInt(u32)` for null metadata length in the current `format_version = 2` codec).
 - **atomic write**: write-to-temp then rename to avoid partial overwrite of existing files.
 - **fsync**: flush file data and metadata to stable storage before rename/close.
-- **trailing garbage**: bytes appended past expected record count; treated as corruption in v1 loader.
+- **trailing garbage**: bytes appended past expected record count; treated as corruption by the current strict parser (`format_version = 2`).

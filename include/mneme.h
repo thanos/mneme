@@ -103,8 +103,9 @@ mneme_status_t mneme_collection_delete(
  * Semantics:
  * - fail-fast and non-transactional: deletions completed before the first failing row remain applied.
  * - rows are processed in index order [0, count).
- * - out_deleted (if non-null) is always written with the number of rows deleted
- *   before return (including partial progress on error).
+ * - out_deleted is optional and may be NULL.
+ * - when out_deleted is non-NULL, it is always written with the number of rows
+ *   deleted before return (including partial progress on first error).
  */
 mneme_status_t mneme_collection_delete_batch(
     mneme_collection_t *collection,

@@ -26,6 +26,9 @@ Artifacts:
 - macOS: `libmneme.dylib`
 - Linux: `libmneme.so`
 - header: `include/mneme.h`
+- runnable examples:
+  - `examples/python/ctypes_basic.py`
+  - `examples/rust/ffi_basic.rs`
 
 ## 3) Python (`ctypes`) Example
 
