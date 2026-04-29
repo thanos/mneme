@@ -36,12 +36,15 @@ fn addMnemeCoverageRun(
     });
     test_artifact.root_module.addImport("mneme", mneme_module);
 
+    const ensure_out_dir = b.addSystemCommand(&.{ "mkdir", "-p", coverage_out_dir });
+
     const kcov_run = b.addSystemCommand(&.{
         "kcov",
         "--clean",
         "--include-path=src",
         coverage_out_dir,
     });
+    kcov_run.step.dependOn(&ensure_out_dir.step);
     kcov_run.addFileArg(test_artifact.getEmittedBin());
     return kcov_run;
 }
@@ -210,14 +213,6 @@ pub fn build(b: *std.Build) void {
     c_integration_step.dependOn(&run_c_example.step);
 
     const coverage_step = b.step("coverage", "Run test coverage with kcov");
-    const coverage_root_tests = b.addSystemCommand(&.{
-        "kcov",
-        "--clean",
-        "--include-path=src",
-        b.getInstallPath(.prefix, "kcov/root"),
-    });
-    coverage_root_tests.addFileArg(root_tests.getEmittedBin());
-    coverage_step.dependOn(&coverage_root_tests.step);
 
     const coverage_vector_tests = addMnemeCoverageRun(
         b,

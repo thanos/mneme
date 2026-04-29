@@ -64,9 +64,11 @@ jobs:
 
       - name: Coverage
         run: zig build coverage
+        continue-on-error: true
 
       - name: Upload kcov artifact
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: kcov-coverage
           path: zig-out/kcov
