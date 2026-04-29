@@ -7,7 +7,11 @@ on:
 
 jobs:
   lint-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - name: Checkout
@@ -26,6 +30,67 @@ jobs:
 
       - name: Format check
         run: zig fmt --check .
+
+      - name: Cache kcov install
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mneme-kcov
+          key: ${{ runner.os }}-kcov-v1
+
+      - name: Install kcov (from source)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git cmake make g++ \
+            libcurl4-openssl-dev libelf-dev libdw-dev binutils-dev zlib1g-dev \
+            libiberty-dev python3
+
+          KCOV_ROOT="$HOME/.cache/mneme-kcov"
+          KCOV_BIN="$KCOV_ROOT/bin/kcov"
+          if [ -x "$KCOV_BIN" ]; then
+            echo "$KCOV_ROOT/bin" >> "$GITHUB_PATH"
+            "$KCOV_BIN" --version
+            exit 0
+          fi
+
+          git clone --depth 1 https://github.com/SimonKagstrom/kcov.git
+          cmake -S kcov -B kcov/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build kcov/build -j"$(nproc)"
+          cmake --install kcov/build --prefix "$KCOV_ROOT"
+          echo "$KCOV_ROOT/bin" >> "$GITHUB_PATH"
+          "$KCOV_BIN" --version
+
+      - name: Test
+        run: zig build test
+
+      - name: C integration
+        run: zig build c-integration
+
+      - name: Coverage
+        if: runner.os == 'Linux'
+        run: zig build coverage
+        continue-on-error: true
+
+      - name: Upload kcov artifact
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kcov-coverage-${{ matrix.os }}
+          path: zig-out/kcov
+
+  coverage-c-integration:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
 
       - name: Cache kcov install
         uses: actions/cache@v4
@@ -56,23 +121,12 @@ jobs:
           echo "$KCOV_ROOT/bin" >> "$GITHUB_PATH"
           "$KCOV_BIN" --version
 
-      - name: Test
-        run: zig build test
-
-      - name: C integration
-        run: zig build c-integration
-
-      - name: Coverage
-        run: zig build coverage
-        continue-on-error: true
-
       - name: Coverage (C integration)
         run: zig build coverage-c-integration
-        continue-on-error: true
 
-      - name: Upload kcov artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload kcov C integration artifact
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: kcov-coverage
-          path: zig-out/kcov
+          name: kcov-c-integration
+          path: zig-out/kcov/c_integration

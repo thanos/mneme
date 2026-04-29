@@ -149,3 +149,17 @@ Recommended wrapper style in Rust:
 - `mneme_last_error` is thread-local.
 - Calls on the same collection handle are serialized by ABI lock.
 - Do not call `mneme_collection_free` while other calls are in-flight on that handle.
+
+## 9) Wrapper Ecosystem Notes (Phase 5 planning)
+
+Given planned wrapper/tooling direction, keep the ABI ergonomics centered on:
+
+- stable C signatures + explicit ownership (`create/load/search allocate`, caller frees)
+- predictable status mapping and thread-local last-error reads on the same thread
+- optional out-parameters where supported (`out_inserted` / `out_deleted`)
+
+Specific notes for planned stack:
+
+- **PyOZ**: keep C ABI examples small and deterministic so Python extension wrappers can map status/ownership clearly.
+- **zigler**: favor explicit resource-lifetime contracts and non-blocking guidance for long operations when called from managed runtimes.
+- **Zigar** and **zig-build**: keep build/link instructions platform-explicit (`.dylib` vs `.so`, runtime search path expectations) to reduce integration friction across JS/native pipelines.

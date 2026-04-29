@@ -190,6 +190,23 @@ test "insert batch works and reduces call count" {
     try std.testing.expectEqual(@as(u64, 3), capi.mneme_collection_count(collection));
 }
 
+test "insert batch allows null out_inserted" {
+    var collection: ?*capi.mneme_collection_t = null;
+    try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_create("docs", 3, capi.MNEME_METRIC_COSINE, &collection));
+    defer capi.mneme_collection_free(collection);
+
+    const ids = [_]?[*:0]const u8{ "a", "b" };
+    const vectors = [_]f32{
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+    };
+    try std.testing.expectEqual(
+        capi.MNEME_OK,
+        capi.mneme_collection_insert_batch(collection, &ids, &vectors, 3, null, 2, null),
+    );
+    try std.testing.expectEqual(@as(u64, 2), capi.mneme_collection_count(collection));
+}
+
 test "insert batch reports partial progress on null id entry" {
     var collection: ?*capi.mneme_collection_t = null;
     try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_create("docs", 3, capi.MNEME_METRIC_COSINE, &collection));
@@ -313,6 +330,29 @@ test "delete batch reports partial progress on null id entry" {
     );
     try std.testing.expectEqual(@as(u32, 1), deleted);
     try std.testing.expectEqual(@as(u64, 2), capi.mneme_collection_count(collection));
+}
+
+test "delete batch allows null out_deleted" {
+    var collection: ?*capi.mneme_collection_t = null;
+    try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_create("docs", 3, capi.MNEME_METRIC_COSINE, &collection));
+    defer capi.mneme_collection_free(collection);
+
+    const vectors = [_]f32{
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+    };
+    const ids_insert = [_]?[*:0]const u8{ "a", "b" };
+    try std.testing.expectEqual(
+        capi.MNEME_OK,
+        capi.mneme_collection_insert_batch(collection, &ids_insert, &vectors, 3, null, 2, null),
+    );
+
+    const ids_delete = [_]?[*:0]const u8{ "a", "b" };
+    try std.testing.expectEqual(
+        capi.MNEME_OK,
+        capi.mneme_collection_delete_batch(collection, &ids_delete, 2, null),
+    );
+    try std.testing.expectEqual(@as(u64, 0), capi.mneme_collection_count(collection));
 }
 
 test "flat search works and result access works" {
