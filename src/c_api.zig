@@ -1,5 +1,6 @@
 const std = @import("std");
 const Collection = @import("collection.zig").Collection;
+const Point = @import("point.zig").Point;
 const SearchResult = @import("index.zig").SearchResult;
 const Metric = @import("index.zig").Metric;
 const SearchOptions = @import("index.zig").SearchOptions;
@@ -31,6 +32,7 @@ pub const mneme_results_t = opaque {};
 
 const CCollection = struct {
     collection: Collection,
+    revision: u64 = 0,
     mutex: SpinLock = .{},
 };
 
@@ -137,6 +139,23 @@ fn metricFromC(metric: mneme_metric_t) ?Metric {
     return null;
 }
 
+fn cloneCollectionForSnapshot(source: *const Collection) !Collection {
+    var snapshot = try Collection.init(
+        abi_allocator,
+        source.name,
+        source.dimension,
+        source.metric,
+    );
+    errdefer snapshot.deinit();
+
+    try snapshot.points.ensureTotalCapacity(abi_allocator, source.points.items.len);
+    for (source.points.items) |point| {
+        const cloned = try Point.init(abi_allocator, point.id, point.vector, point.metadata);
+        try snapshot.points.append(abi_allocator, cloned);
+    }
+    return snapshot;
+}
+
 fn convertAndTakeResults(
     collection: *Collection,
     raw_results: []SearchResult,
@@ -233,6 +252,7 @@ pub export fn mneme_collection_insert(
     coll_handle.collection.insert(std.mem.span(id.?), vector_slice, metadata_slice) catch |err| {
         return mapError(err);
     };
+    coll_handle.revision +%= 1;
     clearLastError();
     return MNEME_OK;
 }
@@ -280,6 +300,7 @@ pub export fn mneme_collection_insert_batch(
     var coll = &coll_handle.collection;
     while (inserted < n) : (inserted += 1) {
         const id_ptr = ids_slice[inserted] orelse {
+            if (inserted > 0) coll_handle.revision +%= 1;
             if (out_inserted) |ptr| ptr.* = @intCast(inserted);
             setLastError("InvalidArgument");
             return MNEME_ERROR_INVALID_ARGUMENT;
@@ -291,10 +312,12 @@ pub export fn mneme_collection_insert_batch(
             break :blk null;
         } else null;
         coll.insert(std.mem.span(id_ptr), vector, metadata_value) catch |err| {
+            if (inserted > 0) coll_handle.revision +%= 1;
             if (out_inserted) |ptr| ptr.* = @intCast(inserted);
             return mapError(err);
         };
     }
+    coll_handle.revision +%= 1;
     if (out_inserted) |ptr| ptr.* = @intCast(inserted);
     clearLastError();
     return MNEME_OK;
@@ -314,6 +337,7 @@ pub export fn mneme_collection_delete(
     coll_handle.collection.delete(std.mem.span(id.?)) catch |err| {
         return mapError(err);
     };
+    coll_handle.revision +%= 1;
     clearLastError();
     return MNEME_OK;
 }
@@ -346,15 +370,18 @@ pub export fn mneme_collection_delete_batch(
     var coll = &coll_handle.collection;
     while (deleted < n) : (deleted += 1) {
         const id_ptr = ids_slice[deleted] orelse {
+            if (deleted > 0) coll_handle.revision +%= 1;
             if (out_deleted) |ptr| ptr.* = @intCast(deleted);
             setLastError("InvalidArgument");
             return MNEME_ERROR_INVALID_ARGUMENT;
         };
         coll.delete(std.mem.span(id_ptr)) catch |err| {
+            if (deleted > 0) coll_handle.revision +%= 1;
             if (out_deleted) |ptr| ptr.* = @intCast(deleted);
             return mapError(err);
         };
     }
+    coll_handle.revision +%= 1;
     if (out_deleted) |ptr| ptr.* = @intCast(deleted);
     clearLastError();
     return MNEME_OK;
@@ -406,9 +433,6 @@ pub export fn mneme_collection_build_hnsw(
         setLastError("InvalidArgument");
         return MNEME_ERROR_INVALID_ARGUMENT;
     }
-    const coll_handle = asCollection(collection.?);
-    coll_handle.mutex.lock();
-    defer coll_handle.mutex.unlock();
     const cfg = config.?.*;
     const m_usize = std.math.cast(usize, cfg.m) orelse {
         setLastError("InvalidIndexConfig");
@@ -422,12 +446,34 @@ pub export fn mneme_collection_build_hnsw(
         setLastError("InvalidIndexConfig");
         return MNEME_ERROR_INVALID_ARGUMENT;
     };
-    coll_handle.collection.buildHnsw(.{
+
+    const coll_handle = asCollection(collection.?);
+    coll_handle.mutex.lock();
+    const snapshot_revision = coll_handle.revision;
+    var snapshot = cloneCollectionForSnapshot(&coll_handle.collection) catch |err| {
+        coll_handle.mutex.unlock();
+        return mapError(err);
+    };
+    coll_handle.mutex.unlock();
+    errdefer snapshot.deinit();
+
+    snapshot.buildHnsw(.{
         .m = m_usize,
         .ef_construction = ef_construction_usize,
         .ef_search = ef_search_usize,
         .seed = cfg.seed,
     }) catch |err| return mapError(err);
+
+    coll_handle.mutex.lock();
+    if (coll_handle.revision != snapshot_revision) {
+        coll_handle.mutex.unlock();
+        setLastError("IndexStale");
+        return MNEME_ERROR_INDEX_STALE;
+    }
+    var old_collection = coll_handle.collection;
+    coll_handle.collection = snapshot;
+    coll_handle.mutex.unlock();
+    old_collection.deinit();
     clearLastError();
     return MNEME_OK;
 }
@@ -477,8 +523,14 @@ pub export fn mneme_collection_save(
     }
     const coll_handle = asCollection(collection.?);
     coll_handle.mutex.lock();
-    defer coll_handle.mutex.unlock();
-    coll_handle.collection.saveToFile(std.mem.span(path.?)) catch |err| return mapError(err);
+    var snapshot = cloneCollectionForSnapshot(&coll_handle.collection) catch |err| {
+        coll_handle.mutex.unlock();
+        return mapError(err);
+    };
+    coll_handle.mutex.unlock();
+    defer snapshot.deinit();
+
+    snapshot.saveToFile(std.mem.span(path.?)) catch |err| return mapError(err);
     clearLastError();
     return MNEME_OK;
 }

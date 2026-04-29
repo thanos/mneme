@@ -15,6 +15,13 @@ const ReaderWriterCtx = struct {
     had_error: *std.atomic.Value(bool),
 };
 
+const BuildRaceCtx = struct {
+    collection: *capi.mneme_collection_t,
+    done: *std.atomic.Value(bool),
+    had_error: *std.atomic.Value(bool),
+    next_id: *std.atomic.Value(u32),
+};
+
 const ThreadErrorCapture = struct {
     mode: u8,
     buf: [64]u8 = [_]u8{0} ** 64,
@@ -67,6 +74,27 @@ fn writerWorker(ctx: *const ReaderWriterCtx) void {
             return;
         };
         const v = [_]f32{ 1.0, @as(f32, @floatFromInt(@mod(i, 10))) / 10.0, 0.0 };
+        const status = capi.mneme_collection_insert(ctx.collection, id.ptr, &v, v.len, null);
+        if (status != capi.MNEME_OK) {
+            ctx.had_error.store(true, .seq_cst);
+            return;
+        }
+    }
+}
+
+fn buildRaceWriterWorker(ctx: *const BuildRaceCtx) void {
+    while (!ctx.done.load(.seq_cst)) {
+        const id_num = ctx.next_id.fetchAdd(1, .seq_cst);
+        var id_buf: [32:0]u8 = undefined;
+        const id = std.fmt.bufPrintSentinel(&id_buf, "race_{d}", .{id_num}, 0) catch {
+            ctx.had_error.store(true, .seq_cst);
+            return;
+        };
+        const v = [_]f32{
+            @as(f32, @floatFromInt(@mod(id_num, 29))) / 29.0,
+            @as(f32, @floatFromInt(@mod(id_num + 7, 31))) / 31.0,
+            0.5,
+        };
         const status = capi.mneme_collection_insert(ctx.collection, id.ptr, &v, v.len, null);
         if (status != capi.MNEME_OK) {
             ctx.had_error.store(true, .seq_cst);
@@ -593,4 +621,60 @@ test "parallel insert and flat search on same collection are safe" {
 
     try std.testing.expect(!had_error.load(.seq_cst));
     try std.testing.expect(capi.mneme_collection_count(collection) >= 1);
+}
+
+test "build hnsw races with writes and reports index stale" {
+    var collection: ?*capi.mneme_collection_t = null;
+    try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_create("docs", 3, capi.MNEME_METRIC_COSINE, &collection));
+    defer capi.mneme_collection_free(collection);
+
+    var i: usize = 0;
+    while (i < 256) : (i += 1) {
+        var id_buf: [32:0]u8 = undefined;
+        const id = try std.fmt.bufPrintSentinel(&id_buf, "seed_{d}", .{i}, 0);
+        const v = [_]f32{
+            @as(f32, @floatFromInt(@mod(i, 17))) / 17.0,
+            @as(f32, @floatFromInt(@mod(i + 5, 19))) / 19.0,
+            1.0,
+        };
+        try std.testing.expectEqual(capi.MNEME_OK, capi.mneme_collection_insert(collection, id.ptr, &v, v.len, null));
+    }
+
+    var done = std.atomic.Value(bool).init(false);
+    var had_error = std.atomic.Value(bool).init(false);
+    var next_id = std.atomic.Value(u32).init(100_000);
+    const build_ctx = BuildRaceCtx{
+        .collection = collection.?,
+        .done = &done,
+        .had_error = &had_error,
+        .next_id = &next_id,
+    };
+    const writer_thread = try std.Thread.spawn(.{}, buildRaceWriterWorker, .{&build_ctx});
+    defer {
+        done.store(true, .seq_cst);
+        writer_thread.join();
+    }
+
+    // Try multiple builds while the writer thread is mutating.
+    const cfg = capi.mneme_hnsw_config_t{
+        .m = 16,
+        .ef_construction = 64,
+        .ef_search = 32,
+        .seed = 13,
+    };
+    var stale_seen = false;
+    var attempt: usize = 0;
+    while (attempt < 20) : (attempt += 1) {
+        const status = capi.mneme_collection_build_hnsw(collection, &cfg);
+        if (status == capi.MNEME_ERROR_INDEX_STALE) {
+            stale_seen = true;
+            break;
+        }
+        try std.testing.expectEqual(capi.MNEME_OK, status);
+    }
+
+    done.store(true, .seq_cst);
+
+    try std.testing.expect(!had_error.load(.seq_cst));
+    try std.testing.expect(stale_seen);
 }

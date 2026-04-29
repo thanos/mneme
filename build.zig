@@ -80,11 +80,12 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    b.installArtifact(shared_lib);
-    shared_lib.installHeader(b.path("include/mneme.h"), "mneme.h");
+    const install_shared_lib = b.addInstallArtifact(shared_lib, .{});
+    const install_shared_header = b.addInstallHeaderFile(b.path("include/mneme.h"), "mneme.h");
 
     const lib_step = b.step("lib", "Build shared C ABI library");
-    lib_step.dependOn(b.getInstallStep());
+    lib_step.dependOn(&install_shared_lib.step);
+    lib_step.dependOn(&install_shared_header.step);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -204,7 +205,8 @@ pub fn build(b: *std.Build) void {
     compile_c_example.addArg(b.fmt("-Wl,-rpath,{s}", .{install_lib_dir}));
     compile_c_example.addArg("-o");
     compile_c_example.addArg(smoke_bin_path);
-    compile_c_example.step.dependOn(b.getInstallStep());
+    compile_c_example.step.dependOn(&install_shared_lib.step);
+    compile_c_example.step.dependOn(&install_shared_header.step);
 
     const run_c_example = b.addSystemCommand(&.{smoke_bin_path});
     run_c_example.step.dependOn(&compile_c_example.step);
