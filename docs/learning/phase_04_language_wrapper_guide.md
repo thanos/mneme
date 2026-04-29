@@ -30,6 +30,17 @@ Artifacts:
   - `examples/python/ctypes_basic.py`
   - `examples/rust/ffi_basic.rs`
 
+Release artifact contract (tag-triggered GitHub releases):
+
+- `mneme-<tag>-linux-x86_64.tar.gz`
+- `mneme-<tag>-macos-arm64.tar.gz`
+
+Each archive layout:
+
+- `lib/libmneme.so` or `lib/libmneme.dylib`
+- `include/mneme.h`
+- `SHA256SUMS`
+
 ## 3) Python (`ctypes`) Example
 
 ```python
@@ -163,3 +174,6 @@ Specific notes for planned stack:
 - **PyOZ**: keep C ABI examples small and deterministic so Python extension wrappers can map status/ownership clearly.
 - **zigler**: favor explicit resource-lifetime contracts and non-blocking guidance for long operations when called from managed runtimes.
 - **Zigar** and **zig-build**: keep build/link instructions platform-explicit (`.dylib` vs `.so`, runtime search path expectations) to reduce integration friction across JS/native pipelines.
+
+For wrapper packaging pipelines, consume release archives by deterministic name and
+verify `SHA256SUMS` before unpacking headers/libs.

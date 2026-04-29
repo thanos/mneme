@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release-assets:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x86_64
+            lib_name: libmneme.so
+          - os: macos-latest
+            platform: macos-arm64
+            lib_name: libmneme.dylib
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Build C ABI library
+        run: zig build lib
+
+      - name: Package release asset
+        env:
+          TAG: ${{ github.ref_name }}
+          PLATFORM: ${{ matrix.platform }}
+          LIB_NAME: ${{ matrix.lib_name }}
+        run: |
+          set -euo pipefail
+          STAGE_DIR="stage/mneme-${TAG}-${PLATFORM}"
+          mkdir -p "${STAGE_DIR}/lib" "${STAGE_DIR}/include"
+          cp "zig-out/lib/${LIB_NAME}" "${STAGE_DIR}/lib/${LIB_NAME}"
+          cp "zig-out/include/mneme.h" "${STAGE_DIR}/include/mneme.h"
+          (
+            cd "${STAGE_DIR}"
+            shasum -a 256 "lib/${LIB_NAME}" "include/mneme.h" > SHA256SUMS
+          )
+          mkdir -p dist
+          tar -C stage -czf "dist/mneme-${TAG}-${PLATFORM}.tar.gz" "mneme-${TAG}-${PLATFORM}"
+
+      - name: Upload packaged asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist/*.tar.gz
+
+  publish-release:
+    needs: build-release-assets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download packaged assets
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Prepare release notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          TAG_MESSAGE="$(git for-each-ref "refs/tags/${TAG}" --format='%(contents)')"
+          if [ -n "${TAG_MESSAGE}" ]; then
+            printf '%s\n' "${TAG_MESSAGE}" > RELEASE_NOTES.md
+          else
+            cat > RELEASE_NOTES.md <<EOF
+          Release ${TAG}
+
+          Automated multi-platform C ABI artifacts for mneme.
+          See CHANGELOG.md and VERSIONING.md for compatibility details.
+          EOF
+          fi
+
+      - name: Create GitHub release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.md
+          files: dist/*.tar.gz

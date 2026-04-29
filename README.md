@@ -109,6 +109,23 @@ zig build lib
 zig build c-integration
 ```
 
+## Release Artifacts
+
+Pushing a tag that starts with `v` (for example `v0.5.0`) triggers release packaging.
+
+Published assets are platform archives named:
+
+- `mneme-<tag>-linux-x86_64.tar.gz`
+- `mneme-<tag>-macos-arm64.tar.gz`
+
+Each archive contains:
+
+- `lib/libmneme.so` (Linux) or `lib/libmneme.dylib` (macOS)
+- `include/mneme.h`
+- `SHA256SUMS`
+
+See `VERSIONING.md` and `CHANGELOG.md` for compatibility/release policy.
+
 Coverage (Linux-oriented, `kcov` required):
 
 ```bash
