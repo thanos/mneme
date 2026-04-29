@@ -453,9 +453,13 @@ pub export fn mneme_collection_search_hnsw(
     coll_handle.mutex.lock();
     defer coll_handle.mutex.unlock();
     var coll = &coll_handle.collection;
+    const ef_search_override: ?usize = if (ef_search == MNEME_EF_SEARCH_DEFAULT) null else std.math.cast(usize, ef_search) orelse {
+        setLastError("InvalidEfSearch");
+        return MNEME_ERROR_INVALID_ARGUMENT;
+    };
     const search_options = SearchOptions{
         .index = .hnsw,
-        .ef_search = if (ef_search == MNEME_EF_SEARCH_DEFAULT) null else @as(usize, ef_search),
+        .ef_search = ef_search_override,
     };
     const raw = coll.searchWithOptions(query_slice, @intCast(top_k), search_options) catch |err| return mapError(err);
     convertAndTakeResults(coll, raw, out_results.?) catch |err| return mapError(err);

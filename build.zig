@@ -54,7 +54,7 @@ pub fn build(b: *std.Build) void {
     shared_lib.installHeader(b.path("include/mneme.h"), "mneme.h");
 
     const lib_step = b.step("lib", "Build shared C ABI library");
-    lib_step.dependOn(&shared_lib.step);
+    lib_step.dependOn(b.getInstallStep());
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
